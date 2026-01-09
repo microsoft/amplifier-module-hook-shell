@@ -1,0 +1,33 @@
+# Test settings.yaml - demonstrates hooks configuration via settings file
+# This is an alternative to bundle-based configuration
+
+# Module sources
+sources:
+  hooks-shell: git+https://github.com/robotdad/amplifier-module-hooks-shell@main
+
+# Hooks configuration via settings (alternative to bundle YAML)
+modules:
+  hooks:
+    - module: hooks-shell
+      source: git+https://github.com/robotdad/amplifier-module-hooks-shell@main
+      config:
+        # Directories to search for hooks.json files
+        hooks_dirs:
+          - .amplifier/hooks
+          - ~/.amplifier/hooks
+        
+        # Enabled events (all by default)
+        enabled_events:
+          - PreToolUse
+          - PostToolUse
+          - UserPromptSubmit
+          - SessionStart
+          - SessionEnd
+        
+        # Timeout settings
+        default_timeout: 30
+        max_timeout: 120
+        
+        # Behavior settings
+        fail_open: false  # If true, hook errors allow operation to proceed
+        verbose_logging: true  # Log hook execution details

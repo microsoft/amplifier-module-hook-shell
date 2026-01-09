@@ -1,0 +1,18 @@
+{
+  "name": "file-guard",
+  "description": "Block writes to protected files and directories",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${AMPLIFIER_HOOKS_DIR}/file-guard/guard.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

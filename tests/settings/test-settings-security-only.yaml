@@ -1,0 +1,20 @@
+# Security-focused settings.yaml
+# Only enables PreToolUse events for blocking dangerous operations
+
+modules:
+  hooks:
+    - module: hooks-shell
+      source: git+https://github.com/robotdad/amplifier-module-hooks-shell@main
+      config:
+        hooks_dirs:
+          - .amplifier/hooks
+        
+        # Only pre-tool events for security checks
+        enabled_events:
+          - PreToolUse
+        
+        # Strict mode - fail closed on hook errors
+        fail_open: false
+        
+        # Short timeout for security hooks
+        default_timeout: 5

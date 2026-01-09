@@ -1,0 +1,7 @@
+# Minimal settings.yaml - just the hooks-shell module with defaults
+# Tests that minimal configuration works
+
+modules:
+  hooks:
+    - module: hooks-shell
+      source: git+https://github.com/robotdad/amplifier-module-hooks-shell@main
