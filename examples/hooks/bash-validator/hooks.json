@@ -1,0 +1,17 @@
+{
+  "description": "Validate bash commands before execution",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${AMPLIFIER_HOOKS_DIR}/bash-validator/validate.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "description": "Automatically format code files after editing",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${AMPLIFIER_HOOKS_DIR}/auto-formatter/format.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

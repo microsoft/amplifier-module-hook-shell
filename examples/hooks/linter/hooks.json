@@ -1,0 +1,17 @@
+{
+  "description": "Run linter and inject feedback to agent",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${AMPLIFIER_HOOKS_DIR}/linter/lint.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
