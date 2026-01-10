@@ -1,8 +1,8 @@
 # Shell Hooks Module for Amplifier - Specification
 
-**Version**: 1.0  
-**Date**: 2026-01-06  
-**Status**: Draft
+**Version**: 1.1  
+**Date**: 2026-01-10  
+**Status**: Phase 1 Complete, Phase 2 Ready
 
 ## Executive Summary
 
@@ -75,67 +75,99 @@ We adopt Claude Code's hook configuration format for compatibility:
 ### Component Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│         Amplifier Core Events                │
-└──────────────┬──────────────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────────┐
-│    Claude Code Hook Bridge Module           │
-│  ┌─────────────────────────────────────┐   │
-│  │  Event Mapper                        │   │
-│  │  (Amplifier → Claude Code events)    │   │
-│  └─────────────┬───────────────────────┘   │
-│                │                             │
-│  ┌─────────────▼───────────────────────┐   │
-│  │  Hook Registry                       │   │
-│  │  (Load from .amplifier/hooks/)       │   │
-│  └─────────────┬───────────────────────┘   │
-│                │                             │
-│  ┌─────────────▼───────────────────────┐   │
-│  │  Matcher Engine                      │   │
-│  │  (Regex matching on tool names)      │   │
-│  └─────────────┬───────────────────────┘   │
-│                │                             │
-│  ┌─────────────▼───────────────────────┐   │
-│  │  Command Executor                    │   │
-│  │  (Subprocess with JSON stdin/stdout) │   │
-│  └─────────────┬───────────────────────┘   │
-│                │                             │
-│  ┌─────────────▼───────────────────────┐   │
-│  │  Response Translator                 │   │
-│  │  (Exit codes/JSON → HookResult)      │   │
-│  └─────────────────────────────────────┘   │
-└──────────────┬──────────────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────────┐
-│         Amplifier Hook System                │
-│         (HookResult processing)              │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│         Amplifier Core Events                   │
+└──────────────────┬──────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────┐
+│    Shell Hook Bridge Module                     │
+│  ┌─────────────────────────────────────────┐   │
+│  │  Event Mapper                           │   │
+│  │  (Amplifier → Claude Code events)       │   │
+│  └─────────────┬───────────────────────────┘   │
+│                │                               │
+│  ┌─────────────▼───────────────────────────┐   │
+│  │  Hook Registry                          │   │
+│  │  (Load from .amplifier/hooks/)          │   │
+│  └─────────────┬───────────────────────────┘   │
+│                │                               │
+│  ┌─────────────▼───────────────────────────┐   │
+│  │  Matcher Engine                         │   │
+│  │  (Regex matching on tool names)         │   │
+│  └─────────────┬───────────────────────────┘   │
+│                │                               │
+│  ┌─────────────▼───────────────────────────┐   │
+│  │  Command Executor                       │   │
+│  │  (Subprocess with JSON stdin/stdout)    │   │
+│  └─────────────┬───────────────────────────┘   │
+│                │                               │
+│  ┌─────────────▼───────────────────────────┐   │
+│  │  Response Translator                    │   │
+│  │  (Exit codes/JSON → HookResult)         │   │
+│  └─────────────────────────────────────────┘   │
+└──────────────────┬──────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────┐
+│         Amplifier Hook System                   │
+│         (HookResult processing)                 │
+└─────────────────────────────────────────────────┘
 ```
 
 ## Event Mapping
 
-### Supported Events (Phase 1)
+### Complete Event Mapping
 
-| Claude Code Event | Amplifier Event | Priority | Notes |
-|-------------------|-----------------|----------|-------|
-| `PreToolUse` | `tool:pre` | High | Before tool execution, can block |
-| `PostToolUse` | `tool:post` | High | After tool completion |
-| `UserPromptSubmit` | `prompt:submit` | High | User prompt submission |
-| `SessionStart` | `session:start` | Medium | Session initialization |
-| `SessionEnd` | `session:end` | Medium | Session cleanup |
+All Claude Code events map to **existing** Amplifier core events. No core changes required.
 
-### Future Events (Phase 2)
+| Claude Code Event | Amplifier Event | Status | Matchers | Notes |
+|-------------------|-----------------|--------|----------|-------|
+| `PreToolUse` | `tool:pre` | ✅ Phase 1 | Tool name regex | Before tool execution, can block |
+| `PostToolUse` | `tool:post` | ✅ Phase 1 | Tool name regex | After tool completion |
+| `UserPromptSubmit` | `prompt:submit` | ✅ Phase 1 | - | User prompt submission |
+| `SessionStart` | `session:start` | ✅ Phase 1 | startup, resume, clear, compact | Session initialization |
+| `SessionEnd` | `session:end` | ✅ Phase 1 | - | Session cleanup |
+| `Stop` | `orchestrator:complete` | 🔲 Phase 2 | - | Main agent finished responding |
+| `SubagentStop` | `tool:post` | 🔲 Phase 2 | `Task` | Task tool completion (subagent) |
+| `PreCompact` | `context:pre_compact` | 🔲 Phase 2 | manual, auto | Before context compaction |
+| `PermissionRequest` | `approval:required` | 🔲 Phase 2 | Tool name regex | When permission dialog shown |
+| `Notification` | `user:notification` | 🔲 Phase 2 | permission_prompt, idle_prompt, auth_success | Various notifications |
 
-| Claude Code Event | Amplifier Event | Notes |
-|-------------------|-----------------|-------|
-| `Stop` | `orchestrator:stop` | Needs new event type |
-| `SubagentStop` | `task:post` | Task tool completion |
-| `PermissionRequest` | `tool:ask_user` | When ask_user triggered |
-| `PreCompact` | `context:pre_compact` | Needs new event type |
-| `Notification` | Various | Map to specific notification types |
+### SessionStart Matchers
+
+SessionStart supports matchers to differentiate trigger types:
+
+| Matcher | Amplifier Event | Description |
+|---------|-----------------|-------------|
+| `startup` | `session:start` | New session startup |
+| `resume` | `session:resume` | Resuming existing session |
+| `clear` | `session:start` (with clear flag) | After /clear command |
+| `compact` | `context:post_compact` | After context compaction |
+
+### SubagentStop Pattern
+
+SubagentStop is handled as a special case of `tool:post` by matching the tool name:
+
+```json
+{
+  "hooks": {
+    "SubagentStop": [
+      {
+        "hooks": [{"type": "command", "command": "./check-subagent.sh"}]
+      }
+    ]
+  }
+}
+```
+
+Internally mapped to:
+```python
+# SubagentStop → tool:post with matcher "Task"
+if event == "SubagentStop":
+    amplifier_event = "tool:post"
+    implicit_matcher = "Task"
+```
 
 ## Data Translation
 
@@ -143,7 +175,7 @@ We adopt Claude Code's hook configuration format for compatibility:
 
 Each Claude Code event expects specific JSON structure on stdin.
 
-#### PreToolUse Format
+#### PreToolUse Input
 ```json
 {
   "tool_name": "Bash",
@@ -155,7 +187,7 @@ Each Claude Code event expects specific JSON structure on stdin.
 }
 ```
 
-#### PostToolUse Format
+#### PostToolUse Input
 ```json
 {
   "tool_name": "Bash",
@@ -171,7 +203,7 @@ Each Claude Code event expects specific JSON structure on stdin.
 }
 ```
 
-#### UserPromptSubmit Format
+#### UserPromptSubmit Input
 ```json
 {
   "prompt": "Please implement the login feature",
@@ -179,12 +211,37 @@ Each Claude Code event expects specific JSON structure on stdin.
 }
 ```
 
-#### SessionStart Format
+#### SessionStart Input
 ```json
 {
   "session_id": "f55bc601-9746-43b8-819f-279401de2434",
   "trigger": "startup",
   "timestamp": "2026-01-06T19:48:00Z"
+}
+```
+
+#### Stop/SubagentStop Input (Phase 2)
+```json
+{
+  "stop_hook_active": true,
+  "timestamp": "2026-01-06T19:49:00Z"
+}
+```
+
+#### PreCompact Input (Phase 2)
+```json
+{
+  "trigger": "auto",
+  "timestamp": "2026-01-06T19:50:00Z"
+}
+```
+
+#### Notification Input (Phase 2)
+```json
+{
+  "type": "permission_prompt",
+  "message": "Allow write to file.txt?",
+  "timestamp": "2026-01-06T19:51:00Z"
 }
 ```
 
@@ -223,6 +280,20 @@ Advanced hooks return JSON on stdout:
 | Exit code 2 | `deny` | `reason` from stderr |
 | Exit code 0 | `continue` | - |
 
+### Event-Specific Decision Control
+
+Different events support different decision controls:
+
+| Event | Supports Block | Supports Modify | Supports Context Injection |
+|-------|---------------|-----------------|---------------------------|
+| PreToolUse | ✅ | ✅ | ✅ |
+| PostToolUse | ❌ | ❌ | ✅ |
+| UserPromptSubmit | ✅ | ✅ | ✅ |
+| Stop/SubagentStop | ✅ (prevent stop) | ❌ | ❌ |
+| PermissionRequest | ✅ (auto-deny/allow) | ❌ | ❌ |
+| SessionStart | ❌ | ❌ | ✅ |
+| SessionEnd | ❌ | ❌ | ❌ |
+
 ## Matcher System
 
 Claude Code uses regex patterns to filter which tools trigger hooks:
@@ -231,6 +302,13 @@ Claude Code uses regex patterns to filter which tools trigger hooks:
 - `"Edit|Write"` - Match Edit OR Write tools
 - `"Notebook.*"` - Regex pattern for Notebook tools
 - `"*"` or `""` - Match all tools
+- Case-insensitive by default
+
+**MCP Tool Naming** (Phase 2):
+MCP tools use the pattern `mcp__<server>__<toolName>`. Configure matchers like:
+```json
+{"matcher": "mcp__filesystem__.*"}
+```
 
 **Implementation**:
 ```python
@@ -239,10 +317,10 @@ def matches_pattern(tool_name: str, matcher: str) -> bool:
     if not matcher or matcher == "*":
         return True
     try:
-        return bool(re.fullmatch(matcher, tool_name))
+        return bool(re.fullmatch(matcher, tool_name, re.IGNORECASE))
     except re.error:
         # Fallback to exact match if regex is invalid
-        return tool_name == matcher
+        return tool_name.lower() == matcher.lower()
 ```
 
 ## Environment Variables
@@ -259,6 +337,56 @@ Hook commands have access to these environment variables:
 For compatibility, we also provide Claude Code equivalents:
 - `CLAUDE_PROJECT_DIR` → Same as `AMPLIFIER_PROJECT_DIR`
 - `CLAUDE_ENV_FILE` → Same as `AMPLIFIER_ENV_FILE`
+
+### Environment Variable Persistence (Phase 2)
+
+SessionStart hooks can persist environment variables for the session:
+
+```bash
+#!/bin/bash
+# Write to AMPLIFIER_ENV_FILE to persist vars
+echo "export PROJECT_VERSION=1.2.3" >> "$AMPLIFIER_ENV_FILE"
+echo "export BUILD_ID=$(date +%s)" >> "$AMPLIFIER_ENV_FILE"
+```
+
+## Hooks in Skills (Phase 1.5)
+
+Claude Code supports hooks embedded in Skills, Agents, and Slash Commands via frontmatter. This is a **key integration point** for Amplifier.
+
+### Skill Frontmatter Format
+
+```yaml
+---
+name: secure-operations
+description: Perform operations with security checks
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: "./scripts/security-check.sh"
+  PostToolUse:
+    - matcher: "Edit|Write"
+      hooks:
+        - type: command
+          command: "./scripts/run-linter.sh"
+---
+```
+
+### Lifecycle Scoping
+
+Component-scoped hooks:
+- Only run when the component (skill/agent) is active
+- Automatically cleaned up when component finishes
+- Support `once: true` to run only once per session
+
+### Integration with Amplifier Skills
+
+Requires coordination with `amplifier-module-tool-skills`:
+1. Skills loader parses `hooks:` section from frontmatter
+2. Passes hook configs to hooks-shell bridge
+3. Bridge registers handlers with lifecycle scope
+4. Cleanup on skill completion
 
 ## Hook Installation
 
@@ -300,10 +428,9 @@ sed -i 's/${CLAUDE_PLUGIN_ROOT}/${AMPLIFIER_HOOKS_DIR}\/formatter/g' \
   .amplifier/hooks/formatter/hooks.json
 ```
 
-### Future: Amplifier CLI Support
+### Future: Amplifier CLI Support (Phase 3)
 
 ```bash
-# Phase 2: CLI installation
 amplifier hooks install https://github.com/user/claude-code-plugin-formatter
 amplifier hooks list
 amplifier hooks enable formatter
@@ -333,7 +460,7 @@ Hooks run as **shell commands with user permissions**. Malicious hooks can:
 ```yaml
 # In bundle configuration
 hooks:
-  - module: hooks-claude-code-bridge
+  - module: hooks-shell
     config:
       enabled: true
       allow_user_hooks: true       # Allow .amplifier/hooks/
@@ -369,7 +496,7 @@ def merge_hook_configs(configs: list[dict]) -> dict:
 
 ## Implementation Phases
 
-### Phase 1: MVP (Initial Implementation)
+### Phase 1: MVP ✅ COMPLETE
 
 **Scope**:
 - Core bridge module with event mapping
@@ -379,41 +506,75 @@ def merge_hook_configs(configs: list[dict]) -> dict:
 - Manual hook installation to `.amplifier/hooks/`
 
 **Deliverables**:
-- `amplifier-module-hooks-claude-code` module
-- Configuration loader
-- Command executor
-- Response translator
-- Basic example hooks
-- Documentation
+- `amplifier-module-hooks-shell` module ✅
+- Configuration loader ✅
+- Command executor ✅
+- Response translator ✅
+- Basic example hooks ✅
+- Documentation ✅
+- Unit tests (86% coverage) ✅
+- Integration tests ✅
 
-**Acceptance Criteria**:
-- Can load hooks from `.amplifier/hooks/`
-- Can execute bash command hooks
-- Can parse exit codes and JSON responses
-- Can translate to HookResult correctly
-- Example hooks work end-to-end
+**Acceptance Criteria** (all met):
+- ✅ Can load hooks from `.amplifier/hooks/`
+- ✅ Can execute bash command hooks
+- ✅ Can parse exit codes and JSON responses
+- ✅ Can translate to HookResult correctly
+- ✅ Example hooks work end-to-end
 
-### Phase 2: Enhanced Support
+### Phase 1.5: Skills Integration (HIGH PRIORITY)
 
 **Scope**:
-- Prompt-based hooks (LLM evaluation)
-- Additional events: Stop, SubagentStop, PreCompact, Notification
-- Environment variable persistence (AMPLIFIER_ENV_FILE)
-- Hook enable/disable controls
-- Better error handling and logging
+- Hooks embedded in skill frontmatter
+- Lifecycle-scoped hooks (active only when skill runs)
+- `once: true` option for run-once hooks
+- Coordination with `tool-skills` module
 
 **Deliverables**:
-- Prompt-based hook executor
+- Frontmatter hook parser
+- Lifecycle scope management
+- Skills module integration
+- Documentation
+
+**Why Priority**: This is the key differentiator - portable skills with built-in hooks.
+
+### Phase 2: Extended Events
+
+**Scope** (no core changes needed - all events exist):
+- Stop event (`orchestrator:complete`)
+- SubagentStop (`tool:post` with Task matcher)
+- PreCompact (`context:pre_compact`)
+- PermissionRequest (`approval:required`)
+- Notification (`user:notification`)
+- SessionStart matchers (startup/resume/clear/compact)
+- Environment variable persistence (`AMPLIFIER_ENV_FILE`)
+- Prompt-based hooks (`type: "prompt"`)
+
+**Deliverables**:
 - Extended event mappings
+- SessionStart matcher support
 - Environment file support
-- Control configuration
+- Prompt-based hook executor
 - Enhanced documentation
+
+### Phase 2.5: Prompt-Based Hooks
+
+**Scope**:
+- `type: "prompt"` hook execution
+- Fast model (Haiku-class) for evaluation
+- `$ARGUMENTS` placeholder expansion
+- Response schema: `{ok: true/false, reason: "..."}`
+
+**Best for**:
+- Stop hooks (intelligent completion detection)
+- SubagentStop (task completion evaluation)
+- Complex permission decisions
 
 ### Phase 3: Ecosystem Integration
 
 **Scope**:
 - CLI commands for hook management
-- Hook marketplace/catalog
+- Parallel hook execution
 - Plugin package format
 - Migration tools (Claude Code → Amplifier)
 - Performance optimizations
@@ -425,184 +586,23 @@ def merge_hook_configs(configs: list[dict]) -> dict:
 - Migration scripts
 - Performance benchmarks
 
-## Example Use Cases
-
-### Use Case 1: Bash Command Logging
-
-**Hook**: Log all bash commands to a file
-
-```json
-{
-  "description": "Log bash commands",
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "jq -r '.tool_input.command' >> ${AMPLIFIER_PROJECT_DIR}/bash-commands.log"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-### Use Case 2: Automatic Code Formatting
-
-**Hook**: Format TypeScript files after editing
-
-```json
-{
-  "description": "Auto-format TypeScript",
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${AMPLIFIER_HOOKS_DIR}/formatter/format-ts.sh",
-            "timeout": 30
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Script `format-ts.sh`:
-```bash
-#!/bin/bash
-file_path=$(jq -r '.tool_input.file_path')
-if [[ "$file_path" == *.ts ]]; then
-    npx prettier --write "$file_path"
-    echo "✓ Formatted $file_path"
-fi
-```
-
-### Use Case 3: Production File Protection
-
-**Hook**: Block writes to production config files
-
-```json
-{
-  "description": "Protect production files",
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${AMPLIFIER_HOOKS_DIR}/protection/check-file.py",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Script `check-file.py`:
-```python
-#!/usr/bin/env python3
-import json
-import sys
-
-data = json.load(sys.stdin)
-file_path = data.get('tool_input', {}).get('file_path', '')
-
-# Block writes to production files
-protected = ['.env.production', 'package-lock.json', '.git/']
-if any(p in file_path for p in protected):
-    print(json.dumps({
-        "decision": "block",
-        "reason": f"Cannot modify protected file: {file_path}",
-        "systemMessage": "⛔ Protected file - manual approval required"
-    }))
-    sys.exit(2)
-
-sys.exit(0)
-```
-
-### Use Case 4: Lint Feedback Injection
-
-**Hook**: Run linter and inject feedback to agent
-
-```json
-{
-  "description": "Python linting feedback",
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${AMPLIFIER_HOOKS_DIR}/linter/pylint-feedback.py",
-            "timeout": 15
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Script `pylint-feedback.py`:
-```python
-#!/usr/bin/env python3
-import json
-import sys
-import subprocess
-
-data = json.load(sys.stdin)
-file_path = data.get('tool_input', {}).get('file_path', '')
-
-if not file_path.endswith('.py'):
-    sys.exit(0)
-
-# Run pylint
-result = subprocess.run(
-    ['pylint', file_path],
-    capture_output=True,
-    text=True
-)
-
-if result.returncode != 0:
-    # Inject linting errors as context
-    print(json.dumps({
-        "decision": "approve",
-        "contextInjection": f"Linting errors in {file_path}:\n{result.stdout}",
-        "systemMessage": "⚠️ Linting issues detected"
-    }))
-else:
-    print(json.dumps({
-        "decision": "approve",
-        "systemMessage": "✓ Lint check passed"
-    }))
-```
-
 ## Testing Strategy
 
-### Unit Tests
+### Unit Tests ✅
 - Configuration loading and merging
 - Event mapping (Amplifier → Claude Code)
 - Matcher regex evaluation
 - Response translation (exit codes, JSON)
 - Environment variable injection
 
-### Integration Tests
+### Integration Tests ✅
 - End-to-end hook execution
-- Multiple hooks on same event
-- Hook timeout handling
-- Error propagation
-- HookResult generation
+- Blocking hooks (exit code 2)
+- JSON block responses
+- Context injection
+- Module mount with HookRegistry
+- Regex pattern matching
+- Session lifecycle events
 
 ### Example Hook Tests
 - Bash command logger
@@ -615,26 +615,26 @@ else:
 ### Subprocess Overhead
 
 Each hook spawns a subprocess. For performance:
-- **Cache hook discovery**: Load configs once at startup
-- **Parallel execution**: Run multiple hooks concurrently
-- **Timeout aggressively**: Default 30s, but allow shorter
-- **Skip on pattern mismatch**: Don't spawn if matcher doesn't match
+- **Cache hook discovery**: Load configs once at startup ✅
+- **Parallel execution**: Run multiple hooks concurrently (Phase 3)
+- **Timeout aggressively**: Default 30s, but allow shorter ✅
+- **Skip on pattern mismatch**: Don't spawn if matcher doesn't match ✅
 
 ### Optimization Strategies
 
 ```python
-# Pre-compile regex matchers
+# Pre-compile regex matchers (implemented)
 class OptimizedMatcher:
     def __init__(self, pattern: str):
         self.pattern = pattern
-        self.regex = re.compile(pattern) if pattern and pattern != "*" else None
+        self.regex = re.compile(pattern, re.IGNORECASE) if pattern and pattern != "*" else None
     
     def matches(self, tool_name: str) -> bool:
         if self.regex is None:
             return True
         return bool(self.regex.fullmatch(tool_name))
 
-# Batch hook execution
+# Batch hook execution (Phase 3)
 async def execute_hooks_parallel(hooks: list, data: dict):
     tasks = [execute_hook(hook, data) for hook in hooks]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -643,10 +643,10 @@ async def execute_hooks_parallel(hooks: list, data: dict):
 
 ## Open Questions
 
-1. **Sandboxing**: Should Phase 2 include Docker/bubblewrap sandboxing for untrusted hooks?
-2. **Hook marketplace**: Is there interest in a central registry for sharing hooks?
-3. **Prompt hooks**: Should we use same provider as main agent or dedicated fast model?
-4. **Versioning**: How to handle hook API version compatibility?
+1. ~~**Core events**: Do we need new events in amplifier-core?~~ **RESOLVED: No, all events exist**
+2. **Sandboxing**: Should Phase 3 include Docker/bubblewrap sandboxing for untrusted hooks?
+3. **Hook marketplace**: Is there interest in a central registry for sharing hooks?
+4. **Prompt hooks model**: Should we use same provider as main agent or dedicated fast model?
 5. **Migration**: Should we provide tools to convert existing Claude Code setups?
 
 ## Success Metrics
@@ -660,8 +660,8 @@ async def execute_hooks_parallel(hooks: list, data: dict):
 ## References
 
 ### Claude Code Documentation
-- [Hooks Guide](https://code.claude.com/docs/en/hooks-guide)
-- [Hooks Reference](https://code.claude.com/docs/en/hooks)
+- [Hooks Guide](https://docs.anthropic.com/en/docs/claude-code/hooks)
+- [Hooks Reference](https://docs.anthropic.com/en/docs/claude-code/hooks)
 
 ### Amplifier Documentation
 - `core:docs/HOOKS_API.md` - Hook system API
@@ -674,7 +674,36 @@ async def execute_hooks_parallel(hooks: list, data: dict):
 
 ---
 
-## Appendix A: Complete Example Plugin
+## Appendix A: Complete Event Mapping Reference
+
+```python
+# Complete mapping from Claude Code events to Amplifier events
+CLAUDE_TO_AMPLIFIER_EVENTS = {
+    # Phase 1 (implemented)
+    "PreToolUse": "tool:pre",
+    "PostToolUse": "tool:post",
+    "UserPromptSubmit": "prompt:submit",
+    "SessionStart": "session:start",
+    "SessionEnd": "session:end",
+    
+    # Phase 2 (all events exist in amplifier-core)
+    "Stop": "orchestrator:complete",
+    "SubagentStop": "tool:post",  # with implicit matcher "Task"
+    "PreCompact": "context:pre_compact",
+    "PermissionRequest": "approval:required",
+    "Notification": "user:notification",
+}
+
+# SessionStart matchers map to different events
+SESSION_START_MATCHERS = {
+    "startup": "session:start",
+    "resume": "session:resume",
+    "clear": "session:start",  # with clear flag in data
+    "compact": "context:post_compact",
+}
+```
+
+## Appendix B: Complete Example Plugin
 
 **Directory**: `.amplifier/hooks/bash-validator/`
 
@@ -722,33 +751,7 @@ done
 exit 0
 ```
 
-**File**: `README.md`
-```markdown
-# Bash Command Validator
-
-Blocks dangerous bash commands before execution.
-
-## Installation
-
-\`\`\`bash
-cp -r bash-validator .amplifier/hooks/
-chmod +x .amplifier/hooks/bash-validator/validate.sh
-\`\`\`
-
-## Blocked Patterns
-
-- `rm -rf /`
-- `dd if=`
-- `mkfs`
-- Fork bombs
-
-## Customization
-
-Edit `validate.sh` to add more patterns to the `dangerous` array.
-\`\`\`
-```
-
-## Appendix B: Hook Registry Schema
+## Appendix C: Hook Registry Schema
 
 ```json
 {
@@ -792,6 +795,11 @@ Edit `validate.sh` to add more patterns to the `dangerous` array.
                     "type": "number",
                     "description": "Timeout in seconds",
                     "default": 30
+                  },
+                  "once": {
+                    "type": "boolean",
+                    "description": "Run only once per session (skills only)",
+                    "default": false
                   }
                 },
                 "required": ["type"]
