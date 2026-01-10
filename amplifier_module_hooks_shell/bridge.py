@@ -4,6 +4,7 @@ Main bridge module for shell hooks.
 Coordinates loading, matching, execution, and translation of hooks.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -276,11 +277,82 @@ class ShellHookBridge:
         )
         return {"ok": True, "reason": "Could not parse response"}
 
+    async def _execute_single_hook(
+        self,
+        hook_config: dict[str, Any],
+        claude_data: dict[str, Any],
+        original_data: dict[str, Any],
+        executor: HookExecutor,
+    ) -> dict[str, Any]:
+        """
+        Execute a single hook and return the result fields.
+
+        Args:
+            hook_config: Individual hook configuration
+            claude_data: Data in Claude Code format for command hooks
+            original_data: Original Amplifier event data for prompt hooks
+            executor: HookExecutor instance
+
+        Returns:
+            HookResult fields dict
+        """
+        hook_type = hook_config.get("type", "command")
+
+        if hook_type == "command":
+            # Execute shell command hook
+            command = hook_config.get("command")
+            if not command:
+                return {"action": "continue"}
+
+            timeout = hook_config.get("timeout", 30.0)
+            logger.info(f"Executing command hook: {command}")
+
+            exit_code, stdout, stderr = await executor.execute(command, claude_data, timeout)
+
+            logger.debug(
+                f"Hook result: exit_code={exit_code}, stdout={stdout[:100] if stdout else ''}"
+            )
+
+            # Translate response
+            result_fields = self.translator.from_claude_response(exit_code, stdout, stderr)
+
+        elif hook_type == "prompt":
+            # Execute prompt-based hook using LLM
+            prompt = hook_config.get("prompt")
+            if not prompt:
+                return {"action": "continue"}
+
+            logger.info(f"Executing prompt hook: {prompt[:50]}...")
+
+            prompt_result = await self._execute_prompt_hook(prompt, original_data)
+
+            # Translate prompt result to HookResult fields
+            # ok=True -> continue, ok=False -> deny
+            if prompt_result.get("ok", True):
+                result_fields = {"action": "continue"}
+                if prompt_result.get("reason"):
+                    result_fields["user_message"] = prompt_result["reason"]
+            else:
+                result_fields = {
+                    "action": "deny",
+                    "reason": prompt_result.get("reason", "Prompt hook returned ok=false"),
+                }
+
+            logger.debug(f"Prompt hook result: {result_fields}")
+
+        else:
+            # Unknown hook type, skip
+            logger.debug(f"Skipping unknown hook type: {hook_type}")
+            return {"action": "continue"}
+
+        return result_fields
+
     async def _execute_hooks(self, amplifier_event: str, data: dict[str, Any]) -> dict[str, Any]:
         """
         Execute matching hooks for an event.
 
         Checks both directory-based hooks and skill-scoped hooks.
+        Supports parallel execution when matcher group has parallel=true.
 
         Args:
             amplifier_event: Amplifier event name (e.g., "tool:pre")
@@ -306,27 +378,30 @@ class ShellHookBridge:
         else:
             match_target = data.get("tool_name", data.get("name", ""))
 
-        # Collect matching hooks from all sources
-        matching_hooks: list[dict[str, Any]] = []
+        # Collect matching groups from all sources (preserving parallel flag)
+        matching_groups: list[dict[str, Any]] = []
 
         # 1. Directory-based hooks (.amplifier/hooks/)
         if claude_event in self.matcher_groups:
-            dir_hooks = self.matcher_groups[claude_event].get_matching_hooks(match_target)
-            matching_hooks.extend(dir_hooks)
+            dir_groups = self.matcher_groups[claude_event].get_matching_groups(match_target)
+            matching_groups.extend(dir_groups)
 
         # 2. Skill-scoped hooks (from loaded skills)
         for skill_name, skill_matchers in self.skill_matcher_groups.items():
             if claude_event in skill_matchers:
-                skill_hooks = skill_matchers[claude_event].get_matching_hooks(match_target)
-                if skill_hooks:
-                    logger.debug(f"Found {len(skill_hooks)} hooks from skill '{skill_name}'")
-                    matching_hooks.extend(skill_hooks)
+                skill_groups = skill_matchers[claude_event].get_matching_groups(match_target)
+                if skill_groups:
+                    logger.debug(f"Found {len(skill_groups)} hook groups from skill '{skill_name}'")
+                    matching_groups.extend(skill_groups)
 
-        if not matching_hooks:
+        if not matching_groups:
             logger.debug(f"No matching hooks for {claude_event} with target {match_target}")
             return {"action": "continue"}
 
-        logger.info(f"Found {len(matching_hooks)} matching hooks for {claude_event}")
+        # Count total hooks for logging
+        total_hooks = sum(len(g.get("hooks", [])) for g in matching_groups)
+        num_groups = len(matching_groups)
+        logger.info(f"Found {total_hooks} hooks in {num_groups} groups for {claude_event}")
 
         # Translate data to Claude Code format
         claude_data = self.translator.to_claude_format(claude_event, data)
@@ -335,62 +410,50 @@ class ShellHookBridge:
         session_id = data.get("session_id", "unknown")
         executor = self._get_executor(session_id)
 
-        # Execute all matching hooks
-        for hook_config in matching_hooks:
-            hook_type = hook_config.get("type", "command")
+        # Process each matcher group
+        for matcher_group in matching_groups:
+            hooks = matcher_group.get("hooks", [])
+            parallel = matcher_group.get("parallel", False)
 
-            if hook_type == "command":
-                # Execute shell command hook
-                command = hook_config.get("command")
-                if not command:
-                    continue
-
-                timeout = hook_config.get("timeout", 30.0)
-                logger.info(f"Executing command hook: {command}")
-
-                exit_code, stdout, stderr = await executor.execute(command, claude_data, timeout)
-
-                logger.debug(
-                    f"Hook result: exit_code={exit_code}, stdout={stdout[:100] if stdout else ''}"
-                )
-
-                # Translate response
-                result_fields = self.translator.from_claude_response(exit_code, stdout, stderr)
-
-            elif hook_type == "prompt":
-                # Execute prompt-based hook using LLM
-                prompt = hook_config.get("prompt")
-                if not prompt:
-                    continue
-
-                logger.info(f"Executing prompt hook: {prompt[:50]}...")
-
-                prompt_result = await self._execute_prompt_hook(prompt, data)
-
-                # Translate prompt result to HookResult fields
-                # ok=True -> continue, ok=False -> deny
-                if prompt_result.get("ok", True):
-                    result_fields = {"action": "continue"}
-                    if prompt_result.get("reason"):
-                        result_fields["user_message"] = prompt_result["reason"]
-                else:
-                    result_fields = {
-                        "action": "deny",
-                        "reason": prompt_result.get("reason", "Prompt hook returned ok=false"),
-                    }
-
-                logger.debug(f"Prompt hook result: {result_fields}")
-
-            else:
-                # Unknown hook type, skip
-                logger.debug(f"Skipping unknown hook type: {hook_type}")
+            if not hooks:
                 continue
 
-            # If this hook blocks or modifies, return immediately
-            action = result_fields.get("action", "continue")
-            if action in ("deny", "modify", "inject_context"):
-                logger.info(f"Hook returned action: {action}")
-                return result_fields
+            if parallel:
+                # Run all hooks in this group concurrently
+                logger.debug(f"Executing {len(hooks)} hooks in parallel")
+                results = await asyncio.gather(
+                    *[
+                        self._execute_single_hook(hook, claude_data, data, executor)
+                        for hook in hooks
+                    ],
+                    return_exceptions=True,
+                )
+
+                # Check for any blocking result
+                for result in results:
+                    if isinstance(result, BaseException):
+                        logger.warning(f"Hook failed with exception: {result}")
+                        continue
+
+                    # result is dict[str, Any] after the exception check
+                    result_dict: dict[str, Any] = result
+                    action = result_dict.get("action", "continue")
+                    if action in ("deny", "modify", "inject_context"):
+                        logger.info(f"Parallel hook returned blocking action: {action}")
+                        return result_dict
+
+            else:
+                # Sequential execution (existing behavior)
+                for hook_config in hooks:
+                    result_fields = await self._execute_single_hook(
+                        hook_config, claude_data, data, executor
+                    )
+
+                    # If this hook blocks or modifies, return immediately
+                    action = result_fields.get("action", "continue")
+                    if action in ("deny", "modify", "inject_context"):
+                        logger.info(f"Hook returned action: {action}")
+                        return result_fields
 
         return {"action": "continue"}
 

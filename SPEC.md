@@ -612,21 +612,40 @@ for fast/cheap model (e.g., Haiku) - pending provider tier support in amplifier-
 }
 ```
 
-### Phase 3: Ecosystem Integration
+### Phase 3: Ecosystem Integration (Partial)
 
-**Scope**:
-- CLI commands for hook management
-- Parallel hook execution
-- Plugin package format
-- Migration tools (Claude Code → Amplifier)
-- Performance optimizations
+**Completed**:
+- ✅ Parallel hook execution (`parallel: true` in matcher groups)
+- ✅ `_execute_single_hook()` method for reusable hook execution
+- ✅ `asyncio.gather()` for concurrent hook execution
+- ✅ Short-circuit on first blocking result in parallel mode
+- ✅ Backward compatible (sequential by default)
 
-**Deliverables**:
-- `amplifier hooks` CLI commands
-- Plugin package specification
-- Hook discovery service
-- Migration scripts
-- Performance benchmarks
+**Parallel Execution Configuration**:
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "parallel": true,
+        "hooks": [
+          {"type": "command", "command": "./check1.sh"},
+          {"type": "command", "command": "./check2.sh"},
+          {"type": "command", "command": "./check3.sh"}
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Deferred to Post-Upstream**:
+The following Phase 3 items are deferred until after upstream integration:
+- CLI commands (`amplifier hooks install/list/enable/disable`)
+- Migration tools (Claude Code → Amplifier conversion)
+- Plugin package format and specification
+- Hook discovery service / marketplace
 
 ## Testing Strategy
 
@@ -658,7 +677,7 @@ for fast/cheap model (e.g., Haiku) - pending provider tier support in amplifier-
 
 Each hook spawns a subprocess. For performance:
 - **Cache hook discovery**: Load configs once at startup ✅
-- **Parallel execution**: Run multiple hooks concurrently (Phase 3)
+- **Parallel execution**: Run multiple hooks concurrently ✅ (Phase 3)
 - **Timeout aggressively**: Default 30s, but allow shorter ✅
 - **Skip on pattern mismatch**: Don't spawn if matcher doesn't match ✅
 
@@ -676,11 +695,28 @@ class OptimizedMatcher:
             return True
         return bool(self.regex.fullmatch(tool_name))
 
-# Batch hook execution (Phase 3)
-async def execute_hooks_parallel(hooks: list, data: dict):
-    tasks = [execute_hook(hook, data) for hook in hooks]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    return combine_results(results)
+# Parallel hook execution (implemented in Phase 3)
+# Configure with "parallel": true in matcher group
+async def _execute_hooks(self, ...):
+    for matcher_group in matching_groups:
+        hooks = matcher_group.get("hooks", [])
+        parallel = matcher_group.get("parallel", False)
+        
+        if parallel:
+            results = await asyncio.gather(
+                *[self._execute_single_hook(h, ...) for h in hooks],
+                return_exceptions=True
+            )
+            # Check for any blocking result
+            for result in results:
+                if result.get("action") != "continue":
+                    return result
+        else:
+            # Sequential (default)
+            for hook in hooks:
+                result = await self._execute_single_hook(hook, ...)
+                if result.get("action") != "continue":
+                    return result
 ```
 
 ## Open Questions

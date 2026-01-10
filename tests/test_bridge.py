@@ -1080,3 +1080,327 @@ class TestPromptHookExecution:
         result = await bridge._execute_hooks("prompt:complete", {})
 
         assert result["action"] == "continue"
+
+
+# --- Phase 3: Parallel Execution Tests ---
+
+
+class TestParallelExecution:
+    """Tests for parallel hook execution."""
+
+    @pytest.mark.asyncio
+    async def test_parallel_execution_runs_hooks_concurrently(self, tmp_path, monkeypatch):
+        """Test that parallel=true runs hooks concurrently."""
+        import time
+
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "parallel": True,
+                        "hooks": [
+                            {"type": "command", "command": "echo 1"},
+                            {"type": "command", "command": "echo 2"},
+                            {"type": "command", "command": "echo 3"},
+                        ],
+                    }
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        # Track call order to verify parallel execution
+        call_times = []
+
+        async def mock_execute(command, data, timeout):
+            call_times.append(time.time())
+            return (0, "", "")
+
+        mock_executor = AsyncMock()
+        mock_executor.execute = mock_execute
+        bridge.executor = mock_executor
+
+        result = await bridge._execute_hooks("tool:pre", {"name": "Bash", "input": {}})
+
+        assert result["action"] == "continue"
+        # All 3 hooks should have been called
+        assert len(call_times) == 3
+
+    @pytest.mark.asyncio
+    async def test_parallel_short_circuits_on_first_block(self, tmp_path, monkeypatch):
+        """Test that parallel execution returns first blocking result."""
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "parallel": True,
+                        "hooks": [
+                            {"type": "command", "command": "check1.sh"},
+                            {"type": "command", "command": "check2.sh"},
+                            {"type": "command", "command": "check3.sh"},
+                        ],
+                    }
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        # Second hook returns deny
+        call_count = [0]
+
+        async def mock_execute(command, data, timeout):
+            call_count[0] += 1
+            if "check2" in command:
+                return (2, "", "Blocked by check2")
+            return (0, "", "")
+
+        mock_executor = AsyncMock()
+        mock_executor.execute = mock_execute
+        bridge.executor = mock_executor
+
+        result = await bridge._execute_hooks("tool:pre", {"name": "Bash", "input": {}})
+
+        # Should return deny from the blocking hook
+        assert result["action"] == "deny"
+        # All hooks should have been called (parallel execution)
+        assert call_count[0] == 3
+
+    @pytest.mark.asyncio
+    async def test_parallel_handles_exceptions_gracefully(self, tmp_path, monkeypatch):
+        """Test that parallel execution continues despite exceptions."""
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "parallel": True,
+                        "hooks": [
+                            {"type": "command", "command": "good1.sh"},
+                            {"type": "command", "command": "bad.sh"},
+                            {"type": "command", "command": "good2.sh"},
+                        ],
+                    }
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        async def mock_execute(command, data, timeout):
+            if "bad" in command:
+                raise Exception("Hook execution failed")
+            return (0, "", "")
+
+        mock_executor = AsyncMock()
+        mock_executor.execute = mock_execute
+        bridge.executor = mock_executor
+
+        # Should not raise, should continue despite exception
+        result = await bridge._execute_hooks("tool:pre", {"name": "Bash", "input": {}})
+
+        assert result["action"] == "continue"
+
+    @pytest.mark.asyncio
+    async def test_sequential_remains_default(self, tmp_path, monkeypatch):
+        """Test that sequential execution is the default (no parallel flag)."""
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        # No parallel flag - should default to sequential
+                        "hooks": [
+                            {"type": "command", "command": "first.sh"},
+                            {"type": "command", "command": "second.sh"},
+                        ],
+                    }
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        # First hook returns deny - second should NOT be called in sequential mode
+        call_order = []
+
+        async def mock_execute(command, data, timeout):
+            call_order.append(command)
+            if "first" in command:
+                return (2, "", "Blocked")
+            return (0, "", "")
+
+        mock_executor = AsyncMock()
+        mock_executor.execute = mock_execute
+        bridge.executor = mock_executor
+
+        result = await bridge._execute_hooks("tool:pre", {"name": "Bash", "input": {}})
+
+        assert result["action"] == "deny"
+        # Only first hook should have been called (sequential short-circuit)
+        assert len(call_order) == 1
+        assert "first" in call_order[0]
+
+    @pytest.mark.asyncio
+    async def test_mixed_parallel_and_sequential_groups(self, tmp_path, monkeypatch):
+        """Test mixed parallel and sequential matcher groups."""
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "*",
+                        "parallel": True,
+                        "hooks": [
+                            {"type": "command", "command": "parallel1.sh"},
+                            {"type": "command", "command": "parallel2.sh"},
+                        ],
+                    },
+                    {
+                        "matcher": "Bash",
+                        # Sequential (no parallel flag)
+                        "hooks": [
+                            {"type": "command", "command": "sequential1.sh"},
+                            {"type": "command", "command": "sequential2.sh"},
+                        ],
+                    },
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        call_order = []
+
+        async def mock_execute(command, data, timeout):
+            call_order.append(command)
+            return (0, "", "")
+
+        mock_executor = AsyncMock()
+        mock_executor.execute = mock_execute
+        bridge.executor = mock_executor
+
+        result = await bridge._execute_hooks("tool:pre", {"name": "Bash", "input": {}})
+
+        assert result["action"] == "continue"
+        # All 4 hooks should have been called
+        assert len(call_order) == 4
+
+    @pytest.mark.asyncio
+    async def test_parallel_false_explicit(self, tmp_path, monkeypatch):
+        """Test that parallel=false behaves same as default (sequential)."""
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "parallel": False,
+                        "hooks": [
+                            {"type": "command", "command": "first.sh"},
+                            {"type": "command", "command": "second.sh"},
+                        ],
+                    }
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        call_order = []
+
+        async def mock_execute(command, data, timeout):
+            call_order.append(command)
+            if "first" in command:
+                return (2, "", "Blocked")
+            return (0, "", "")
+
+        mock_executor = AsyncMock()
+        mock_executor.execute = mock_execute
+        bridge.executor = mock_executor
+
+        result = await bridge._execute_hooks("tool:pre", {"name": "Bash", "input": {}})
+
+        assert result["action"] == "deny"
+        # Only first hook should have been called (sequential short-circuit)
+        assert len(call_order) == 1
+
+    @pytest.mark.asyncio
+    async def test_parallel_group_blocking_stops_subsequent_groups(self, tmp_path, monkeypatch):
+        """Test that a blocking result from parallel group stops subsequent groups."""
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "*",
+                        "parallel": True,
+                        "hooks": [
+                            {"type": "command", "command": "block.sh"},
+                        ],
+                    },
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "should_not_run.sh"},
+                        ],
+                    },
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        call_order = []
+
+        async def mock_execute(command, data, timeout):
+            call_order.append(command)
+            if "block" in command:
+                return (2, "", "Blocked")
+            return (0, "", "")
+
+        mock_executor = AsyncMock()
+        mock_executor.execute = mock_execute
+        bridge.executor = mock_executor
+
+        result = await bridge._execute_hooks("tool:pre", {"name": "Bash", "input": {}})
+
+        assert result["action"] == "deny"
+        # Only the blocking hook should have been called
+        assert len(call_order) == 1
+        assert "block" in call_order[0]

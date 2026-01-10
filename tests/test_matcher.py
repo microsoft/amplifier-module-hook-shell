@@ -89,3 +89,48 @@ def test_matcher_group_multiple_matches():
     # Bash should match both
     hooks = group.get_matching_hooks("Bash")
     assert len(hooks) == 2
+
+
+def test_get_matching_groups():
+    """Test get_matching_groups returns full matcher config."""
+    config = [
+        {"matcher": "Bash", "parallel": True, "hooks": [{"type": "command", "command": "echo 1"}]},
+        {"matcher": "Edit", "hooks": [{"type": "command", "command": "echo 2"}]},
+    ]
+
+    group = MatcherGroup(config)
+
+    # Bash should return the full config including parallel flag
+    bash_groups = group.get_matching_groups("Bash")
+    assert len(bash_groups) == 1
+    assert bash_groups[0]["parallel"] is True
+    assert bash_groups[0]["hooks"][0]["command"] == "echo 1"
+
+    # Edit should return config without parallel (not set)
+    edit_groups = group.get_matching_groups("Edit")
+    assert len(edit_groups) == 1
+    assert "parallel" not in edit_groups[0]
+
+    # Read should return empty list
+    read_groups = group.get_matching_groups("Read")
+    assert len(read_groups) == 0
+
+
+def test_get_matching_groups_multiple_matches():
+    """Test that get_matching_groups returns all matching groups."""
+    config = [
+        {"matcher": "*", "parallel": False, "hooks": [{"type": "command", "command": "echo all"}]},
+        {
+            "matcher": "Bash",
+            "parallel": True,
+            "hooks": [{"type": "command", "command": "echo bash"}],
+        },
+    ]
+
+    group = MatcherGroup(config)
+
+    # Bash should match both groups
+    groups = group.get_matching_groups("Bash")
+    assert len(groups) == 2
+    assert groups[0]["parallel"] is False
+    assert groups[1]["parallel"] is True

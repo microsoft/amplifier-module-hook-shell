@@ -74,7 +74,8 @@ class MatcherGroup:
         Args:
             matchers_config: List of matcher configurations
         """
-        self.matchers: list[tuple[HookMatcher, list[dict[str, Any]]]] = []
+        # Store full matcher config for parallel execution support
+        self.matcher_configs: list[tuple[HookMatcher, dict[str, Any]]] = []
 
         for matcher_config in matchers_config:
             pattern = matcher_config.get("matcher", "*")
@@ -82,7 +83,7 @@ class MatcherGroup:
 
             if hooks:  # Only add if there are hooks
                 matcher = HookMatcher(pattern)
-                self.matchers.append((matcher, hooks))
+                self.matcher_configs.append((matcher, matcher_config))
 
     def get_matching_hooks(self, tool_name: str) -> list[dict[str, Any]]:
         """
@@ -96,8 +97,29 @@ class MatcherGroup:
         """
         matching = []
 
-        for matcher, hooks in self.matchers:
+        for matcher, config in self.matcher_configs:
             if matcher.matches(tool_name):
-                matching.extend(hooks)
+                matching.extend(config.get("hooks", []))
+
+        return matching
+
+    def get_matching_groups(self, tool_name: str) -> list[dict[str, Any]]:
+        """
+        Get all matcher groups that match the given tool name.
+
+        Returns the full matcher config (including 'parallel' flag) for each
+        matching group, not just the individual hooks.
+
+        Args:
+            tool_name: Name of the tool
+
+        Returns:
+            List of matcher group configurations that match
+        """
+        matching = []
+
+        for matcher, config in self.matcher_configs:
+            if matcher.matches(tool_name):
+                matching.append(config)
 
         return matching
