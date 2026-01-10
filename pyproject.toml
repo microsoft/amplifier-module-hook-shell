@@ -41,6 +41,9 @@ Homepage = "https://github.com/robotdad/amplifier-module-hooks-shell"
 Repository = "https://github.com/robotdad/amplifier-module-hooks-shell"
 Documentation = "https://github.com/robotdad/amplifier-module-hooks-shell/blob/main/SPEC.md"
 
+[project.entry-points."amplifier.modules"]
+hooks-shell = "amplifier_hooks_shell:mount"
+
 [tool.setuptools.packages.find]
 include = ["amplifier_hooks_shell*"]
 
