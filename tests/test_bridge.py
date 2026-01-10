@@ -678,3 +678,405 @@ async def test_session_resume_adds_trigger(tmp_path, monkeypatch):
     assert result.action == "continue"
     # The hook should have been executed since trigger=resume matches
     assert mock_executor.execute.call_count == 1
+
+
+# --- Phase 2.5 Prompt Hook Tests ---
+
+
+class TestExpandArguments:
+    """Tests for $ARGUMENTS placeholder expansion."""
+
+    def test_no_placeholder(self, tmp_path, monkeypatch):
+        """Test that prompts without $ARGUMENTS are returned unchanged."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        prompt = "Is this task complete?"
+        result = bridge._expand_arguments(prompt, {"prompt": "test"})
+
+        assert result == prompt
+
+    def test_expand_with_prompt(self, tmp_path, monkeypatch):
+        """Test expansion with user prompt data."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        prompt = "The task was: $ARGUMENTS"
+        result = bridge._expand_arguments(prompt, {"prompt": "Fix the bug in auth.py"})
+
+        assert "Fix the bug in auth.py" in result
+        assert "$ARGUMENTS" not in result
+
+    def test_expand_with_tool_data(self, tmp_path, monkeypatch):
+        """Test expansion with tool name and input."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        prompt = "Review this: $ARGUMENTS"
+        data = {"name": "Bash", "input": {"command": "ls -la"}}
+        result = bridge._expand_arguments(prompt, data)
+
+        assert "Bash" in result
+        assert "ls -la" in result
+
+    def test_expand_with_result_truncation(self, tmp_path, monkeypatch):
+        """Test that long results are truncated."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        prompt = "Evaluate: $ARGUMENTS"
+        long_result = "x" * 1000
+        data = {"result": {"output": long_result}}
+        result = bridge._expand_arguments(prompt, data)
+
+        assert "..." in result  # Should be truncated
+        assert len(result) < 1000  # Much shorter than original
+
+
+class TestParsePromptResponse:
+    """Tests for LLM response parsing."""
+
+    def test_parse_json_ok_true(self, tmp_path, monkeypatch):
+        """Test parsing JSON with ok=true."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        response = '{"ok": true, "reason": "Task is complete"}'
+        result = bridge._parse_prompt_response(response)
+
+        assert result["ok"] is True
+        assert result["reason"] == "Task is complete"
+
+    def test_parse_json_ok_false(self, tmp_path, monkeypatch):
+        """Test parsing JSON with ok=false."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        response = '{"ok": false, "reason": "More work needed"}'
+        result = bridge._parse_prompt_response(response)
+
+        assert result["ok"] is False
+        assert result["reason"] == "More work needed"
+
+    def test_parse_json_in_markdown(self, tmp_path, monkeypatch):
+        """Test parsing JSON wrapped in markdown code blocks."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        response = """Here is my response:
+```json
+{"ok": false, "reason": "Not done yet"}
+```"""
+        result = bridge._parse_prompt_response(response)
+
+        assert result["ok"] is False
+
+    def test_parse_string_ok_values(self, tmp_path, monkeypatch):
+        """Test parsing string representations of ok value."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        # Test "true" string
+        result = bridge._parse_prompt_response('{"ok": "true", "reason": "done"}')
+        assert result["ok"] is True
+
+        # Test "yes" string
+        result = bridge._parse_prompt_response('{"ok": "yes", "reason": "done"}')
+        assert result["ok"] is True
+
+        # Test "false" string
+        result = bridge._parse_prompt_response('{"ok": "false", "reason": "not done"}')
+        assert result["ok"] is False
+
+    def test_parse_simple_yes(self, tmp_path, monkeypatch):
+        """Test parsing simple 'yes' response."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        result = bridge._parse_prompt_response("Yes, the task is complete.")
+
+        assert result["ok"] is True
+
+    def test_parse_simple_no(self, tmp_path, monkeypatch):
+        """Test parsing simple 'no' response."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        result = bridge._parse_prompt_response("No, there's more work to do.")
+
+        assert result["ok"] is False
+
+    def test_parse_incomplete_keyword(self, tmp_path, monkeypatch):
+        """Test parsing response with 'incomplete' keyword."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        result = bridge._parse_prompt_response("The task is incomplete.")
+
+        assert result["ok"] is False
+
+    def test_parse_default_on_ambiguous(self, tmp_path, monkeypatch):
+        """Test that ambiguous responses default to ok=True (fail open)."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        result = bridge._parse_prompt_response("I'm not sure what you're asking.")
+
+        assert result["ok"] is True  # Fail open
+
+
+class TestExecutePromptHook:
+    """Tests for prompt hook execution."""
+
+    @pytest.mark.asyncio
+    async def test_no_coordinator(self, tmp_path, monkeypatch):
+        """Test prompt hook with no coordinator returns ok=True."""
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})  # No coordinator
+
+        result = await bridge._execute_prompt_hook("Is this done?", {})
+
+        assert result["ok"] is True
+        assert "No provider" in result["reason"]
+
+    @pytest.mark.asyncio
+    async def test_no_providers(self, tmp_path, monkeypatch):
+        """Test prompt hook with no providers returns ok=True."""
+        from unittest.mock import Mock
+
+        monkeypatch.chdir(tmp_path)
+
+        mock_coordinator = Mock()
+        mock_coordinator.get = Mock(return_value={})  # Empty providers
+
+        bridge = ShellHookBridge({}, mock_coordinator)
+
+        result = await bridge._execute_prompt_hook("Is this done?", {})
+
+        assert result["ok"] is True
+
+    @pytest.mark.asyncio
+    async def test_provider_returns_ok_true(self, tmp_path, monkeypatch):
+        """Test prompt hook with provider returning ok=true."""
+        from unittest.mock import Mock
+
+        monkeypatch.chdir(tmp_path)
+
+        # Mock response - use Mock for attributes, not AsyncMock
+        mock_content_block = Mock()
+        mock_content_block.text = '{"ok": true, "reason": "Complete"}'
+        mock_response = Mock()
+        mock_response.content = [mock_content_block]
+
+        # Mock provider
+        mock_provider = AsyncMock()
+        mock_provider.complete = AsyncMock(return_value=mock_response)
+
+        # Mock coordinator - get is synchronous
+        mock_coordinator = Mock()
+        mock_coordinator.get = Mock(return_value={"default": mock_provider})
+
+        bridge = ShellHookBridge({}, mock_coordinator)
+
+        with patch("amplifier_core.message_models.ChatRequest"):
+            with patch("amplifier_core.message_models.Message"):
+                with patch("amplifier_core.message_models.TextBlock"):
+                    result = await bridge._execute_prompt_hook("Is this done?", {})
+
+        assert result["ok"] is True
+        assert result["reason"] == "Complete"
+
+    @pytest.mark.asyncio
+    async def test_provider_returns_ok_false(self, tmp_path, monkeypatch):
+        """Test prompt hook with provider returning ok=false."""
+        from unittest.mock import Mock
+
+        monkeypatch.chdir(tmp_path)
+
+        # Mock response - use Mock for attributes
+        mock_content_block = Mock()
+        mock_content_block.text = '{"ok": false, "reason": "Not done"}'
+        mock_response = Mock()
+        mock_response.content = [mock_content_block]
+
+        # Mock provider
+        mock_provider = AsyncMock()
+        mock_provider.complete = AsyncMock(return_value=mock_response)
+
+        # Mock coordinator - get is synchronous
+        mock_coordinator = Mock()
+        mock_coordinator.get = Mock(return_value={"default": mock_provider})
+
+        bridge = ShellHookBridge({}, mock_coordinator)
+
+        with patch("amplifier_core.message_models.ChatRequest"):
+            with patch("amplifier_core.message_models.Message"):
+                with patch("amplifier_core.message_models.TextBlock"):
+                    result = await bridge._execute_prompt_hook("Is this done?", {})
+
+        assert result["ok"] is False
+
+    @pytest.mark.asyncio
+    async def test_provider_error_defaults_ok(self, tmp_path, monkeypatch):
+        """Test that provider errors default to ok=True (fail open)."""
+        from unittest.mock import Mock
+
+        monkeypatch.chdir(tmp_path)
+
+        # Mock provider that raises
+        mock_provider = AsyncMock()
+        mock_provider.complete = AsyncMock(side_effect=Exception("Provider error"))
+
+        # Mock coordinator - get is synchronous
+        mock_coordinator = Mock()
+        mock_coordinator.get = Mock(return_value={"default": mock_provider})
+
+        bridge = ShellHookBridge({}, mock_coordinator)
+
+        with patch("amplifier_core.message_models.ChatRequest"):
+            with patch("amplifier_core.message_models.Message"):
+                with patch("amplifier_core.message_models.TextBlock"):
+                    result = await bridge._execute_prompt_hook("Is this done?", {})
+
+        assert result["ok"] is True
+        assert "error" in result["reason"].lower()
+
+
+class TestPromptHookExecution:
+    """Tests for prompt hook execution in _execute_hooks."""
+
+    @pytest.mark.asyncio
+    async def test_execute_prompt_hook_ok_true(self, tmp_path, monkeypatch):
+        """Test that prompt hook with ok=true returns continue."""
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "Stop": [
+                    {
+                        "matcher": ".*",
+                        "hooks": [
+                            {
+                                "type": "prompt",
+                                "prompt": "Is the task complete? $ARGUMENTS",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        # Mock _execute_prompt_hook to return ok=True
+        with patch.object(bridge, "_execute_prompt_hook", new_callable=AsyncMock) as mock_prompt:
+            mock_prompt.return_value = {"ok": True, "reason": "Complete"}
+
+            result = await bridge._execute_hooks("prompt:complete", {"prompt": "fix bug"})
+
+        assert result["action"] == "continue"
+
+    @pytest.mark.asyncio
+    async def test_execute_prompt_hook_ok_false(self, tmp_path, monkeypatch):
+        """Test that prompt hook with ok=false returns deny."""
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "Stop": [
+                    {
+                        "matcher": ".*",
+                        "hooks": [
+                            {
+                                "type": "prompt",
+                                "prompt": "Is the task complete?",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        # Mock _execute_prompt_hook to return ok=False
+        with patch.object(bridge, "_execute_prompt_hook", new_callable=AsyncMock) as mock_prompt:
+            mock_prompt.return_value = {"ok": False, "reason": "Not done yet"}
+
+            result = await bridge._execute_hooks("prompt:complete", {})
+
+        assert result["action"] == "deny"
+        assert result["reason"] == "Not done yet"
+
+    @pytest.mark.asyncio
+    async def test_mixed_command_and_prompt_hooks(self, tmp_path, monkeypatch):
+        """Test execution with both command and prompt hooks."""
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "echo ok"},
+                            {"type": "prompt", "prompt": "Allow this?"},
+                        ],
+                    }
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        # Mock command executor
+        mock_executor = AsyncMock()
+        mock_executor.execute = AsyncMock(return_value=(0, "", ""))
+        bridge.executor = mock_executor
+
+        # Mock prompt hook
+        with patch.object(bridge, "_execute_prompt_hook", new_callable=AsyncMock) as mock_prompt:
+            mock_prompt.return_value = {"ok": True, "reason": "Allowed"}
+
+            result = await bridge._execute_hooks("tool:pre", {"name": "Bash", "input": {}})
+
+        # Both hooks should be called
+        assert mock_executor.execute.call_count == 1
+        assert mock_prompt.call_count == 1
+        assert result["action"] == "continue"
+
+    @pytest.mark.asyncio
+    async def test_prompt_hook_without_prompt_field(self, tmp_path, monkeypatch):
+        """Test that prompt hooks without prompt field are skipped."""
+        hooks_dir = tmp_path / ".amplifier" / "hooks"
+        hooks_dir.mkdir(parents=True)
+
+        config = {
+            "hooks": {
+                "Stop": [
+                    {
+                        "matcher": ".*",
+                        "hooks": [
+                            {"type": "prompt"},  # Missing prompt field
+                        ],
+                    }
+                ]
+            }
+        }
+        (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+        monkeypatch.chdir(tmp_path)
+        bridge = ShellHookBridge({})
+
+        result = await bridge._execute_hooks("prompt:complete", {})
+
+        assert result["action"] == "continue"

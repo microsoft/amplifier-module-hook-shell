@@ -52,14 +52,16 @@ class ShellHookBridge:
         "PreCompact",
     }
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any], coordinator: Any = None):
         """
         Initialize bridge.
 
         Args:
             config: Module configuration from bundle YAML
+            coordinator: Module coordinator for provider access (optional for tests)
         """
         self.config = config
+        self.coordinator = coordinator
         self.enabled = config.get("enabled", True)
 
         # Discover hooks directory
@@ -98,6 +100,181 @@ class ShellHookBridge:
         if self.executor is None:
             self.executor = HookExecutor(self.project_dir, self.hooks_dir, session_id)
         return self.executor
+
+    def _expand_arguments(self, prompt: str, data: dict[str, Any]) -> str:
+        """
+        Expand $ARGUMENTS placeholder in prompt with event context.
+
+        Args:
+            prompt: The prompt template with possible $ARGUMENTS placeholder
+            data: Event data to extract arguments from
+
+        Returns:
+            Expanded prompt string
+        """
+        import json
+
+        if "$ARGUMENTS" not in prompt:
+            return prompt
+
+        # Build arguments string from event data
+        # Include key context fields that are useful for evaluation
+        arguments_parts = []
+
+        if "prompt" in data:
+            arguments_parts.append(f"User prompt: {data['prompt']}")
+        if "name" in data or "tool_name" in data:
+            tool_name = data.get("name", data.get("tool_name", ""))
+            arguments_parts.append(f"Tool: {tool_name}")
+        if "input" in data:
+            arguments_parts.append(f"Input: {json.dumps(data['input'], indent=2)}")
+        if "result" in data:
+            result_str = json.dumps(data["result"], indent=2)
+            # Truncate long results
+            if len(result_str) > 500:
+                result_str = result_str[:500] + "..."
+            arguments_parts.append(f"Result: {result_str}")
+        if "trigger" in data:
+            arguments_parts.append(f"Trigger: {data['trigger']}")
+
+        arguments = "\n".join(arguments_parts) if arguments_parts else json.dumps(data)
+        return prompt.replace("$ARGUMENTS", arguments)
+
+    async def _execute_prompt_hook(self, prompt: str, data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Execute a prompt-based hook using the registered LLM provider.
+
+        Args:
+            prompt: The prompt template (may contain $ARGUMENTS)
+            data: Event context data for placeholder expansion
+
+        Returns:
+            Dict with 'ok' (bool) and 'reason' (str) fields
+        """
+
+        # Expand $ARGUMENTS placeholder
+        expanded_prompt = self._expand_arguments(prompt, data)
+
+        # Get provider from coordinator
+        if not self.coordinator:
+            logger.warning("No coordinator available for prompt hook, defaulting to ok=True")
+            return {"ok": True, "reason": "No provider available"}
+
+        try:
+            providers = self.coordinator.get("providers")
+        except Exception as e:
+            logger.warning(f"Failed to get providers: {e}, defaulting to ok=True")
+            return {"ok": True, "reason": "Provider access failed"}
+
+        if not providers:
+            logger.warning("No providers registered for prompt hook, defaulting to ok=True")
+            return {"ok": True, "reason": "No provider available"}
+
+        # Get first available provider
+        provider = next(iter(providers.values()))
+
+        try:
+            # Import message models for ChatRequest
+            from amplifier_core.message_models import ChatRequest, Message, TextBlock
+
+            # Create request with the expanded prompt
+            request = ChatRequest(
+                messages=[
+                    Message(
+                        role="user",
+                        content=[TextBlock(type="text", text=expanded_prompt)],
+                    )
+                ],
+                max_output_tokens=256,  # Keep responses short
+            )
+
+            # Call provider
+            response = await provider.complete(request)
+
+            # Extract text from response
+            if response.content and len(response.content) > 0:
+                response_text = response.content[0].text
+            else:
+                logger.warning("Empty response from provider, defaulting to ok=True")
+                return {"ok": True, "reason": "Empty provider response"}
+
+            # Parse response for {ok: true/false, reason: "..."}
+            return self._parse_prompt_response(response_text)
+
+        except Exception as e:
+            logger.warning(f"Prompt hook execution failed: {e}, defaulting to ok=True")
+            return {"ok": True, "reason": f"Execution error: {e}"}
+
+    def _parse_prompt_response(self, response_text: str) -> dict[str, Any]:
+        """
+        Parse LLM response for ok/reason decision.
+
+        Handles:
+        - JSON: {"ok": true/false, "reason": "..."}
+        - Simple: "yes"/"no", "true"/"false"
+        - Defaults to ok=True on parse failure (fail open)
+
+        Args:
+            response_text: Raw text response from LLM
+
+        Returns:
+            Dict with 'ok' (bool) and 'reason' (str) fields
+        """
+        import json
+        import re
+
+        response_text = response_text.strip()
+
+        # Try to extract JSON from response (may be wrapped in markdown code blocks)
+        json_match = re.search(r"\{[^{}]*\}", response_text, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group())
+                ok_value = parsed.get("ok", True)
+
+                # Handle various truthy/falsy representations
+                if isinstance(ok_value, bool):
+                    ok = ok_value
+                elif isinstance(ok_value, str):
+                    ok = ok_value.lower() in ("true", "yes", "1", "ok")
+                else:
+                    ok = bool(ok_value)
+
+                reason = parsed.get("reason", "")
+                return {"ok": ok, "reason": reason}
+            except json.JSONDecodeError:
+                pass
+
+        # Try simple yes/no detection (check for explicit indicators)
+        lower_text = response_text.lower()
+        # Check for negative indicators - be specific to avoid false matches
+        negative_patterns = [
+            "not complete",
+            "incomplete",
+            "not done",
+            "not yet",
+            "more work",
+            "needs more",
+        ]
+        positive_patterns = ["yes", "complete", "done", "finished", "fully addressed"]
+
+        # Check negative patterns first (they're more specific)
+        if any(pattern in lower_text for pattern in negative_patterns):
+            return {"ok": False, "reason": response_text[:200]}
+
+        # Check for simple "no" at start of response or standalone
+        if lower_text.startswith("no") or lower_text.startswith("false"):
+            return {"ok": False, "reason": response_text[:200]}
+
+        # Check positive patterns
+        if any(pattern in lower_text for pattern in positive_patterns):
+            return {"ok": True, "reason": response_text[:200]}
+
+        # Default: fail open (allow operation to continue)
+        logger.debug(
+            f"Could not parse prompt response, defaulting to ok=True: {response_text[:100]}"
+        )
+        return {"ok": True, "reason": "Could not parse response"}
 
     async def _execute_hooks(self, amplifier_event: str, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -160,23 +337,54 @@ class ShellHookBridge:
 
         # Execute all matching hooks
         for hook_config in matching_hooks:
-            if hook_config.get("type") != "command":
+            hook_type = hook_config.get("type", "command")
+
+            if hook_type == "command":
+                # Execute shell command hook
+                command = hook_config.get("command")
+                if not command:
+                    continue
+
+                timeout = hook_config.get("timeout", 30.0)
+                logger.info(f"Executing command hook: {command}")
+
+                exit_code, stdout, stderr = await executor.execute(command, claude_data, timeout)
+
+                logger.debug(
+                    f"Hook result: exit_code={exit_code}, stdout={stdout[:100] if stdout else ''}"
+                )
+
+                # Translate response
+                result_fields = self.translator.from_claude_response(exit_code, stdout, stderr)
+
+            elif hook_type == "prompt":
+                # Execute prompt-based hook using LLM
+                prompt = hook_config.get("prompt")
+                if not prompt:
+                    continue
+
+                logger.info(f"Executing prompt hook: {prompt[:50]}...")
+
+                prompt_result = await self._execute_prompt_hook(prompt, data)
+
+                # Translate prompt result to HookResult fields
+                # ok=True -> continue, ok=False -> deny
+                if prompt_result.get("ok", True):
+                    result_fields = {"action": "continue"}
+                    if prompt_result.get("reason"):
+                        result_fields["user_message"] = prompt_result["reason"]
+                else:
+                    result_fields = {
+                        "action": "deny",
+                        "reason": prompt_result.get("reason", "Prompt hook returned ok=false"),
+                    }
+
+                logger.debug(f"Prompt hook result: {result_fields}")
+
+            else:
+                # Unknown hook type, skip
+                logger.debug(f"Skipping unknown hook type: {hook_type}")
                 continue
-
-            command = hook_config["command"]
-            timeout = hook_config.get("timeout", 30.0)
-
-            logger.info(f"Executing hook: {command}")
-
-            # Execute hook
-            exit_code, stdout, stderr = await executor.execute(command, claude_data, timeout)
-
-            logger.debug(
-                f"Hook result: exit_code={exit_code}, stdout={stdout[:100] if stdout else ''}"
-            )
-
-            # Translate response
-            result_fields = self.translator.from_claude_response(exit_code, stdout, stderr)
 
             # If this hook blocks or modifies, return immediately
             action = result_fields.get("action", "continue")

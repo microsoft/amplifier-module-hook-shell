@@ -569,18 +569,48 @@ def merge_hook_configs(configs: list[dict]) -> dict:
 - ✅ AMPLIFIER_ENV_FILE and CLAUDE_ENV_FILE support
 - ✅ Comprehensive tests (66 tests, 78% coverage)
 
-### Phase 2.5: Prompt-Based Hooks
+### Phase 2.5: Prompt-Based Hooks ✅ COMPLETE
 
 **Scope**:
-- `type: "prompt"` hook execution
-- Fast model (Haiku-class) for evaluation
-- `$ARGUMENTS` placeholder expansion
-- Response schema: `{ok: true/false, reason: "..."}`
+- ✅ `type: "prompt"` hook execution
+- ⏳ Fast model (Haiku-class) for evaluation - **FUTURE** (see note below)
+- ✅ `$ARGUMENTS` placeholder expansion
+- ✅ Response schema: `{ok: true/false, reason: "..."}`
+
+**Deliverables**:
+- ✅ `_execute_prompt_hook()` method in bridge.py
+- ✅ `_expand_arguments()` for $ARGUMENTS placeholder
+- ✅ `_parse_prompt_response()` for flexible response parsing
+- ✅ Integration with `_execute_hooks()` for type="prompt" hooks
+- ✅ Coordinator passed to ShellHookBridge for provider access
+- ✅ Comprehensive tests for prompt hooks
 
 **Best for**:
 - Stop hooks (intelligent completion detection)
 - SubagentStop (task completion evaluation)
 - Complex permission decisions
+
+**Note**: Currently uses session's registered provider. Future enhancement: model override
+for fast/cheap model (e.g., Haiku) - pending provider tier support in amplifier-core.
+
+**Example configuration**:
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Has the user's original request been fully addressed? The task was: $ARGUMENTS. Answer with JSON: {\"ok\": true/false, \"reason\": \"...\"}"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 
 ### Phase 3: Ecosystem Integration
 

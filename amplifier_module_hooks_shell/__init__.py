@@ -37,8 +37,8 @@ async def mount(coordinator: Any, config: dict[str, Any]) -> Callable | None:
     """
     logger.info("Mounting hooks-shell module")
 
-    # Create bridge with config
-    bridge = ShellHookBridge(config)
+    # Create bridge with config and coordinator (for provider access)
+    bridge = ShellHookBridge(config, coordinator)
 
     # Register handlers on the coordinator's hook registry
     unregister_fns = []
