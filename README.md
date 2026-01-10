@@ -7,19 +7,13 @@ Add shell-based extensibility to Amplifier with hooks that execute at lifecycle 
 This module enables shell command hooks in Amplifier projects. Hooks can validate, format, block, or inject context into agent execution—all through simple shell scripts.
 
 **What it provides:**
-- 🔧 Shell-based hooks at tool and session lifecycle points
-- 🎯 Regex pattern matching for selective execution
-- 🔒 Security controls (timeouts, exit code handling)
-- 🔌 Claude Code format compatibility (leverage their plugin ecosystem)
-- 🏗️ Foundation-ready (designed for inclusion in amplifier-foundation)
-
-## Why Shell Hooks?
-
-Shell hooks complement Python hooks by providing:
-- **Simplicity** - No Python coding required
-- **Portability** - Use any language/tool (bash, python scripts, system commands)
-- **Reusability** - Share hooks across projects as plugins
-- **Ecosystem** - Leverage Claude Code's hook ecosystem
+- Shell-based hooks at tool and session lifecycle points
+- Regex pattern matching for selective execution
+- Parallel hook execution for performance
+- Prompt-based hooks for LLM evaluation
+- Skill-scoped hooks (hooks embedded in SKILL.md)
+- Security controls (timeouts, exit code handling)
+- Claude Code format compatibility
 
 ## Quick Start
 
@@ -38,13 +32,12 @@ hooks:
 
 1. **Create hooks directory:**
 ```bash
-mkdir -p .amplifier/hooks/my-hook
+mkdir -p .amplifier/hooks
 ```
 
 2. **Create `hooks.json`:**
 ```json
 {
-  "description": "Log bash commands",
   "hooks": {
     "PreToolUse": [
       {
@@ -52,7 +45,7 @@ mkdir -p .amplifier/hooks/my-hook
         "hooks": [
           {
             "type": "command",
-            "command": "${AMPLIFIER_HOOKS_DIR}/my-hook/log.sh"
+            "command": "echo 'Bash command detected' >&2 && exit 0"
           }
         ]
       }
@@ -61,16 +54,7 @@ mkdir -p .amplifier/hooks/my-hook
 }
 ```
 
-3. **Create `log.sh`:**
-```bash
-#!/bin/bash
-jq -r '.tool_input.command' >> bash-commands.log
-```
-
-4. **Make executable:**
-```bash
-chmod +x .amplifier/hooks/my-hook/log.sh
-```
+That's it! The hook will run before every Bash tool execution.
 
 ## Hook Format
 
@@ -78,16 +62,16 @@ Uses Claude Code's JSON hook format for compatibility:
 
 ```json
 {
-  "description": "Hook description",
   "hooks": {
     "EventName": [
       {
-        "matcher": "ToolPattern",  // Regex: "Bash", "Edit|Write", "*"
+        "matcher": "ToolPattern",
+        "parallel": false,
         "hooks": [
           {
             "type": "command",
             "command": "path/to/script.sh",
-            "timeout": 30  // optional, seconds
+            "timeout": 30
           }
         ]
       }
@@ -96,15 +80,27 @@ Uses Claude Code's JSON hook format for compatibility:
 }
 ```
 
+| Field | Description |
+|-------|-------------|
+| `matcher` | Regex pattern: `"Bash"`, `"Edit\|Write"`, `".*"` |
+| `parallel` | Run hooks concurrently (default: `false`) |
+| `type` | `"command"` or `"prompt"` |
+| `command` | Shell command or script path |
+| `timeout` | Seconds before timeout (default: 30) |
+
 ## Supported Events
 
-| Event | When It Fires | Can Block |
-|-------|---------------|-----------|
-| `PreToolUse` | Before tool execution | ✅ Yes |
-| `PostToolUse` | After tool completion | ❌ No |
-| `UserPromptSubmit` | User submits prompt | ✅ Yes |
-| `SessionStart` | Session initialization | ❌ No |
-| `SessionEnd` | Session cleanup | ❌ No |
+| Event | When It Fires | Can Block | Context Injection |
+|-------|---------------|-----------|-------------------|
+| `PreToolUse` | Before tool execution | Yes | Yes |
+| `PostToolUse` | After tool completion | No | Yes |
+| `UserPromptSubmit` | User submits prompt | Yes | Yes |
+| `Notification` | Agent sends notification | No | No |
+| `Stop` | Agent stops execution | No | No |
+| `SubagentStart` | Subagent spawned | No | No |
+| `SubagentStop` | Subagent completed | No | No |
+| `SessionStart` | Session initialization | No | No |
+| `SessionEnd` | Session cleanup | No | No |
 
 ## Hook Input/Output
 
@@ -118,6 +114,7 @@ Hooks receive JSON on stdin:
     "command": "ls -la",
     "description": "List files"
   },
+  "session_id": "abc-123",
   "timestamp": "2026-01-09T20:15:19Z"
 }
 ```
@@ -125,18 +122,105 @@ Hooks receive JSON on stdin:
 ### Output
 **Exit codes:**
 - `0` - Success, allow operation
-- `2` - Block operation
+- `2` - Block operation (blocking events only)
 - Other - Error (treated as allow with warning)
 
 **JSON output (optional, on stdout):**
 ```json
 {
-  "decision": "approve|block",
+  "decision": "approve",
   "reason": "Explanation",
   "systemMessage": "Message to user",
   "contextInjection": "Feedback to inject into agent context"
 }
 ```
+
+## Parallel Execution
+
+Run multiple hooks concurrently for better performance:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "parallel": true,
+        "hooks": [
+          {"type": "command", "command": "./notify-slack.sh"},
+          {"type": "command", "command": "./update-metrics.sh"},
+          {"type": "command", "command": "./sync-logs.sh"}
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Parallel behavior:**
+- All hooks start simultaneously
+- For blocking events: short-circuits on first `block` decision
+- Exceptions are caught and logged, don't fail the group
+- Default is sequential (`parallel: false`)
+
+## Prompt-Based Hooks
+
+Use LLM evaluation for complex decisions:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Review this bash command for security issues. Output JSON with 'decision' (approve/block) and 'reason'.",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Prompt hooks:**
+- Send tool context + your prompt to the configured LLM
+- LLM returns JSON with decision
+- Useful for nuanced evaluation (security review, code quality)
+- Higher latency than command hooks—use selectively
+
+**Note:** Prompt hooks require provider configuration. Currently uses the session's default provider. A future enhancement will allow specifying a fast/cheap model override.
+
+## Skill-Scoped Hooks
+
+Embed hooks directly in skill definitions:
+
+```markdown
+---
+name: python-guardian
+description: Enforces Python best practices
+hooks:
+  PostToolUse:
+    - matcher: "Edit|Write"
+      hooks:
+        - type: command
+          command: "ruff check --fix $FILE_PATH"
+---
+
+# Python Guardian
+
+This skill enforces Python code quality...
+```
+
+**How it works:**
+1. When a skill is loaded, its hooks are registered automatically
+2. Hooks only active while skill is in context
+3. Keeps enforcement rules with the skill that defines them
+
+Requires `amplifier-module-tool-skills` with hooks support.
 
 ## Environment Variables
 
@@ -179,33 +263,9 @@ This module uses Claude Code's hook format, making it compatible with:
 
 **Note**: We use `.amplifier/hooks/` instead of `.claude/hooks/` for Amplifier-native integration.
 
-## Use in Skills
-
-Skills can reference hooks for enforcement. Example in a `SKILL.md`:
-
-```markdown
-## Enforcement
-
-For automatic Python linting, install the linter hook:
-
-\`\`\`bash
-# In your project
-mkdir -p .amplifier/hooks
-cp -r /path/to/linter .amplifier/hooks/
-\`\`\`
-
-Configure in your bundle:
-
-\`\`\`yaml
-hooks:
-  - module: hooks-shell
-    source: git+https://github.com/robotdad/amplifier-module-hooks-shell@main
-\`\`\`
-```
-
 ## Security Considerations
 
-⚠️ **Hooks run with your user permissions.** Only install hooks from trusted sources.
+**Hooks run with your user permissions.** Only install hooks from trusted sources.
 
 **Built-in protections:**
 - Timeout enforcement (default 30s)
@@ -217,13 +277,12 @@ hooks:
 - Review hook code before installation
 - Use timeouts on all hooks
 - Test in non-production first
-- Use specific matchers (avoid `*` when possible)
+- Use specific matchers (avoid `.*` when possible)
 
 ## Documentation
 
 - [Complete Specification](SPEC.md) - Architecture and design
 - [Example Hooks](examples/hooks/) - Working examples
-- [Security Guide](SPEC.md#security-considerations) - Detailed security info
 
 ## Contributing
 
@@ -237,8 +296,16 @@ Contributions welcome! Please ensure alignment with:
 
 MIT License - See LICENSE file for details
 
-## Roadmap
+## Status
 
-**Phase 1 (Current)**: Core command hooks with exit codes and JSON responses  
-**Phase 2**: Prompt-based hooks (LLM evaluation), additional events  
-**Phase 3**: Foundation integration, hook marketplace, CLI management
+**Implemented:**
+- Core command hooks with exit codes and JSON responses
+- Extended lifecycle events (Notification, Stop, Subagent*)
+- Prompt-based hooks (LLM evaluation)
+- Parallel hook execution
+- Skill-scoped hooks integration
+
+**Future (post-upstream):**
+- CLI commands (`amplifier hooks install/list/enable/disable`)
+- Hook migration tools (Claude Code to Amplifier)
+- Plugin package format and marketplace
