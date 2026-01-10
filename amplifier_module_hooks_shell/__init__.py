@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from amplifier_hooks_shell.bridge import ShellHookBridge
+from amplifier_module_hooks_shell.bridge import ShellHookBridge
 
 __version__ = "0.1.0"
 __amplifier_module_type__ = "hook"

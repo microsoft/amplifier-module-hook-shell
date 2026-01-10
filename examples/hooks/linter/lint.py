@@ -3,9 +3,10 @@
 Linter Hook
 Runs linter and injects feedback into agent context
 """
+
 import json
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -16,7 +17,7 @@ def lint_python(file_path: str) -> tuple[bool, str]:
             ["pylint", file_path, "--output-format=text"],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
         )
         if result.returncode == 0:
             return True, "No issues found"
@@ -30,12 +31,7 @@ def lint_python(file_path: str) -> tuple[bool, str]:
 def lint_javascript(file_path: str) -> tuple[bool, str]:
     """Run eslint on JavaScript file."""
     try:
-        result = subprocess.run(
-            ["eslint", file_path],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
+        result = subprocess.run(["eslint", file_path], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             return True, "No issues found"
         return False, result.stdout
@@ -48,40 +44,37 @@ def lint_javascript(file_path: str) -> tuple[bool, str]:
 def main():
     # Read input
     data = json.load(sys.stdin)
-    file_path = data.get('tool_input', {}).get('file_path', '')
-    
+    file_path = data.get("tool_input", {}).get("file_path", "")
+
     if not file_path:
         sys.exit(0)
-    
+
     path = Path(file_path)
     if not path.exists():
         sys.exit(0)
-    
+
     # Run appropriate linter
     success = True
     message = ""
-    
-    if path.suffix == '.py':
+
+    if path.suffix == ".py":
         success, message = lint_python(file_path)
-    elif path.suffix in ['.js', '.ts', '.jsx', '.tsx']:
+    elif path.suffix in [".js", ".ts", ".jsx", ".tsx"]:
         success, message = lint_javascript(file_path)
     else:
         # No linter for this file type
         sys.exit(0)
-    
+
     # Output result
     if success:
-        response = {
-            "decision": "approve",
-            "systemMessage": f"✓ Lint check passed for {path.name}"
-        }
+        response = {"decision": "approve", "systemMessage": f"✓ Lint check passed for {path.name}"}
     else:
         response = {
             "decision": "approve",
             "contextInjection": f"Linting issues in {file_path}:\n{message}",
-            "systemMessage": f"⚠️ Linting issues detected in {path.name}"
+            "systemMessage": f"⚠️ Linting issues detected in {path.name}",
         }
-    
+
     print(json.dumps(response))
 
 

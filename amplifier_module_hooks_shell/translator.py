@@ -5,7 +5,7 @@ Handles bidirectional translation of event data and responses.
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -23,7 +23,7 @@ class DataTranslator:
         Returns:
             Claude Code formatted data
         """
-        timestamp = datetime.utcnow().isoformat() + "Z"
+        timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
         if event == "PreToolUse":
             return {

@@ -42,15 +42,15 @@ Repository = "https://github.com/robotdad/amplifier-module-hooks-shell"
 Documentation = "https://github.com/robotdad/amplifier-module-hooks-shell/blob/main/SPEC.md"
 
 [project.entry-points."amplifier.modules"]
-hooks-shell = "amplifier_hooks_shell:mount"
+hooks-shell = "amplifier_module_hooks_shell:mount"
 
 [tool.setuptools.packages.find]
-include = ["amplifier_hooks_shell*"]
+include = ["amplifier_module_hooks_shell*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=amplifier_hooks_shell --cov-report=term-missing"
+addopts = "--cov=amplifier_module_hooks_shell --cov-report=term-missing"
 
 [tool.black]
 line-length = 100

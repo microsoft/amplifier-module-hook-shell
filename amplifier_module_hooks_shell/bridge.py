@@ -8,10 +8,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from amplifier_hooks_shell.executor import HookExecutor
-from amplifier_hooks_shell.loader import HookConfigLoader
-from amplifier_hooks_shell.matcher import MatcherGroup
-from amplifier_hooks_shell.translator import DataTranslator
+from amplifier_module_hooks_shell.executor import HookExecutor
+from amplifier_module_hooks_shell.loader import HookConfigLoader
+from amplifier_module_hooks_shell.matcher import MatcherGroup
+from amplifier_module_hooks_shell.translator import DataTranslator
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +49,8 @@ class ShellHookBridge:
             # Load configurations
             loader = HookConfigLoader(hooks_dir)
             self.hook_configs = loader.load_all_configs()
-            logger.info(
-                f"Loaded hook configs from {hooks_dir}: {list(self.hook_configs.get('hooks', {}).keys())}"
-            )
+            hook_events = list(self.hook_configs.get("hooks", {}).keys())
+            logger.info(f"Loaded hook configs from {hooks_dir}: {hook_events}")
 
         # Initialize components
         self.project_dir = project_dir
