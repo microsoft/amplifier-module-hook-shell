@@ -45,11 +45,15 @@ async def mount(coordinator: Any, config: dict[str, Any]) -> Callable | None:
 
     # Map Claude Code events to Amplifier events and register handlers
     event_handlers = [
+        # Core lifecycle events
         ("tool:pre", bridge.on_tool_pre, "shell-pre-tool"),
         ("tool:post", bridge.on_tool_post, "shell-post-tool"),
         ("prompt:submit", bridge.on_prompt_submit, "shell-prompt-submit"),
         ("session:start", bridge.on_session_start, "shell-session-start"),
         ("session:end", bridge.on_session_end, "shell-session-end"),
+        # Skill integration events (for skill-scoped hooks)
+        ("skill:loaded", bridge.on_skill_loaded, "shell-skill-loaded"),
+        ("skill:unloaded", bridge.on_skill_unloaded, "shell-skill-unloaded"),
     ]
 
     for event, handler, name in event_handlers:

@@ -58,11 +58,16 @@ class ShellHookBridge:
         self.translator = DataTranslator()
         self.executor: HookExecutor | None = None
 
-        # Create matcher groups for each event
+        # Create matcher groups for each event (from directory-based hooks)
         self.matcher_groups: dict[str, MatcherGroup] = {}
         for event_name, matchers_config in self.hook_configs.get("hooks", {}).items():
             self.matcher_groups[event_name] = MatcherGroup(matchers_config)
             logger.debug(f"Created matcher group for {event_name}")
+
+        # Track skill-scoped hooks (skill_name -> hooks config)
+        self.skill_scoped_hooks: dict[str, dict[str, Any]] = {}
+        # Track skill-scoped matcher groups (skill_name -> {event -> MatcherGroup})
+        self.skill_matcher_groups: dict[str, dict[str, MatcherGroup]] = {}
 
     def _get_executor(self, session_id: str = "unknown") -> HookExecutor:
         """Get or create executor."""
@@ -73,6 +78,8 @@ class ShellHookBridge:
     async def _execute_hooks(self, amplifier_event: str, data: dict[str, Any]) -> dict[str, Any]:
         """
         Execute matching hooks for an event.
+
+        Checks both directory-based hooks and skill-scoped hooks.
 
         Args:
             amplifier_event: Amplifier event name (e.g., "tool:pre")
@@ -87,16 +94,27 @@ class ShellHookBridge:
 
         # Map to Claude Code event name
         claude_event = self.CLAUDE_EVENT_MAP.get(amplifier_event)
-        if not claude_event or claude_event not in self.matcher_groups:
+        if not claude_event:
             return {"action": "continue"}
-
-        matcher_group = self.matcher_groups[claude_event]
 
         # Extract tool name for matching
         tool_name = data.get("tool_name", data.get("name", ""))
 
-        # Get matching hooks
-        matching_hooks = matcher_group.get_matching_hooks(tool_name)
+        # Collect matching hooks from all sources
+        matching_hooks: list[dict[str, Any]] = []
+
+        # 1. Directory-based hooks (.amplifier/hooks/)
+        if claude_event in self.matcher_groups:
+            dir_hooks = self.matcher_groups[claude_event].get_matching_hooks(tool_name)
+            matching_hooks.extend(dir_hooks)
+
+        # 2. Skill-scoped hooks (from loaded skills)
+        for skill_name, skill_matchers in self.skill_matcher_groups.items():
+            if claude_event in skill_matchers:
+                skill_hooks = skill_matchers[claude_event].get_matching_hooks(tool_name)
+                if skill_hooks:
+                    logger.debug(f"Found {len(skill_hooks)} hooks from skill '{skill_name}'")
+                    matching_hooks.extend(skill_hooks)
 
         if not matching_hooks:
             logger.debug(f"No matching hooks for {claude_event} with tool {tool_name}")
@@ -173,3 +191,103 @@ class ShellHookBridge:
 
         result = await self._execute_hooks("session:end", data)
         return HookResult(**result)
+
+    # --- Skill-Scoped Hook Management ---
+
+    async def on_skill_loaded(self, event: str, data: dict[str, Any]):
+        """
+        Handle skill:loaded events - register skill-scoped hooks.
+
+        When a skill with embedded hooks is loaded, we register those hooks
+        so they become active for the rest of the session.
+
+        Args:
+            event: Event name ("skill:loaded")
+            data: Event data containing skill_name, hooks config, etc.
+        """
+        from amplifier_core.models import HookResult
+
+        skill_name = data.get("skill_name")
+        hooks_config = data.get("hooks")
+
+        if not skill_name or not hooks_config:
+            return HookResult(action="continue")
+
+        # Store the hooks config for this skill
+        self.skill_scoped_hooks[skill_name] = hooks_config
+
+        # Create matcher groups for each event in the skill's hooks
+        skill_matchers: dict[str, MatcherGroup] = {}
+        for event_name, matchers_config in hooks_config.items():
+            skill_matchers[event_name] = MatcherGroup(matchers_config)
+            logger.debug(f"Created skill-scoped matcher group for {skill_name}:{event_name}")
+
+        self.skill_matcher_groups[skill_name] = skill_matchers
+
+        # Resolve relative paths in hook commands to be relative to skill directory
+        skill_dir = data.get("skill_directory")
+        if skill_dir:
+            self._resolve_skill_hook_paths(skill_name, skill_dir)
+
+        logger.info(f"Registered {len(hooks_config)} hook events for skill '{skill_name}'")
+
+        return HookResult(action="continue")
+
+    async def on_skill_unloaded(self, event: str, data: dict[str, Any]):
+        """
+        Handle skill:unloaded events - cleanup skill-scoped hooks.
+
+        When a skill is unloaded (e.g., session end), we remove its hooks.
+
+        Args:
+            event: Event name ("skill:unloaded")
+            data: Event data containing skill_name
+        """
+        from amplifier_core.models import HookResult
+
+        skill_name = data.get("skill_name")
+        if not skill_name:
+            return HookResult(action="continue")
+
+        # Remove skill's hooks
+        if skill_name in self.skill_scoped_hooks:
+            del self.skill_scoped_hooks[skill_name]
+            logger.debug(f"Removed hooks config for skill '{skill_name}'")
+
+        if skill_name in self.skill_matcher_groups:
+            del self.skill_matcher_groups[skill_name]
+            logger.debug(f"Removed matcher groups for skill '{skill_name}'")
+
+        logger.info(f"Unregistered hooks for skill '{skill_name}'")
+
+        return HookResult(action="continue")
+
+    def _resolve_skill_hook_paths(self, skill_name: str, skill_dir: str) -> None:
+        """
+        Resolve relative paths in skill hook commands.
+
+        Commands like "./scripts/check.sh" become absolute paths relative
+        to the skill's directory.
+
+        Args:
+            skill_name: Name of the skill
+            skill_dir: Absolute path to the skill's directory
+        """
+        hooks_config = self.skill_scoped_hooks.get(skill_name, {})
+        skill_path = Path(skill_dir)
+
+        for event_name, matchers in hooks_config.items():
+            if not isinstance(matchers, list):
+                continue
+            for matcher_config in matchers:
+                hooks = matcher_config.get("hooks", [])
+                if not isinstance(hooks, list):
+                    continue
+                for hook in hooks:
+                    if hook.get("type") == "command":
+                        command = hook.get("command", "")
+                        # Resolve relative paths (starting with ./ or ../)
+                        if command.startswith("./") or command.startswith("../"):
+                            resolved = skill_path / command
+                            hook["command"] = str(resolved.resolve())
+                            logger.debug(f"Resolved hook path: {command} -> {hook['command']}")

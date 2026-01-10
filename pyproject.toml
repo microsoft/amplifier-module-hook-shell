@@ -7,7 +7,7 @@ name = "amplifier-module-hooks-shell"
 version = "0.1.0"
 description = "Bridge module to execute Claude Code-compatible hooks in Amplifier"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Brian Krabach", email = "robotdad@users.noreply.github.com"}
@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "amplifier-core>=0.1.0",
+    "amplifier-core @ git+https://github.com/microsoft/amplifier-core",
 ]
 
 [project.optional-dependencies]
