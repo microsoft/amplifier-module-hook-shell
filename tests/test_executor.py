@@ -237,3 +237,161 @@ async def test_execute_handles_unicode_output(tmp_path):
     # The echo might output different things based on terminal encoding
     # but it should not crash
     assert stdout is not None
+
+
+# --- Phase 2: Environment File Persistence Tests ---
+
+
+def test_env_file_created_on_demand(tmp_path):
+    """Test that AMPLIFIER_ENV_FILE is created and included in environment."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    hooks_dir = tmp_path / "hooks"
+    hooks_dir.mkdir()
+
+    executor = HookExecutor(project_dir, hooks_dir, "session-1")
+    env = executor._prepare_environment()
+
+    # Should have env file vars
+    assert "AMPLIFIER_ENV_FILE" in env
+    assert "CLAUDE_ENV_FILE" in env
+    assert env["AMPLIFIER_ENV_FILE"] == env["CLAUDE_ENV_FILE"]
+
+    # File path should include session ID prefix (first 8 chars)
+    assert "amplifier-env-session-" in env["AMPLIFIER_ENV_FILE"]
+
+    # Cleanup
+    executor.cleanup()
+
+
+def test_env_file_persistence_basic(tmp_path):
+    """Test basic environment variable persistence."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    hooks_dir = tmp_path / "hooks"
+    hooks_dir.mkdir()
+
+    executor = HookExecutor(project_dir, hooks_dir, "session-1")
+
+    # Get the env file path
+    env = executor._prepare_environment()
+    env_file = Path(env["AMPLIFIER_ENV_FILE"])
+
+    # Write some vars to the env file
+    env_file.write_text("MY_VAR=hello\nexport OTHER_VAR=world\n")
+
+    # Load persisted env
+    executor._load_persisted_env()
+
+    # Subsequent environment should include persisted vars
+    env2 = executor._prepare_environment()
+    assert env2.get("MY_VAR") == "hello"
+    assert env2.get("OTHER_VAR") == "world"
+
+    # Cleanup
+    executor.cleanup()
+
+
+def test_env_file_persistence_with_quotes(tmp_path):
+    """Test environment variable persistence with quoted values."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    hooks_dir = tmp_path / "hooks"
+    hooks_dir.mkdir()
+
+    executor = HookExecutor(project_dir, hooks_dir, "session-1")
+
+    # Get the env file path
+    env = executor._prepare_environment()
+    env_file = Path(env["AMPLIFIER_ENV_FILE"])
+
+    # Write vars with quotes
+    env_file.write_text('QUOTED="hello world"\nSINGLE=\'test value\'\n')
+
+    # Load persisted env
+    executor._load_persisted_env()
+
+    # Check values have quotes stripped
+    env2 = executor._prepare_environment()
+    assert env2.get("QUOTED") == "hello world"
+    assert env2.get("SINGLE") == "test value"
+
+    # Cleanup
+    executor.cleanup()
+
+
+def test_env_file_persistence_ignores_comments(tmp_path):
+    """Test that comments in env file are ignored."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    hooks_dir = tmp_path / "hooks"
+    hooks_dir.mkdir()
+
+    executor = HookExecutor(project_dir, hooks_dir, "session-1")
+
+    # Get the env file path
+    env = executor._prepare_environment()
+    env_file = Path(env["AMPLIFIER_ENV_FILE"])
+
+    # Write with comments
+    env_file.write_text("# This is a comment\nVALID=yes\n# Another comment\n")
+
+    # Load persisted env
+    executor._load_persisted_env()
+
+    env2 = executor._prepare_environment()
+    assert env2.get("VALID") == "yes"
+    assert "# This is a comment" not in env2
+
+    # Cleanup
+    executor.cleanup()
+
+
+def test_cleanup_removes_env_file(tmp_path):
+    """Test that cleanup removes the temp env file."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    hooks_dir = tmp_path / "hooks"
+    hooks_dir.mkdir()
+
+    executor = HookExecutor(project_dir, hooks_dir, "session-1")
+
+    # Create env file
+    env = executor._prepare_environment()
+    env_file = Path(env["AMPLIFIER_ENV_FILE"])
+    assert env_file.exists()
+
+    # Cleanup
+    executor.cleanup()
+    assert not env_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_env_persistence_across_hook_executions(tmp_path):
+    """Test that env vars persist across multiple hook executions."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    hooks_dir = tmp_path / "hooks"
+    hooks_dir.mkdir()
+
+    executor = HookExecutor(project_dir, hooks_dir, "session-1")
+
+    # First hook writes to env file
+    exit_code, stdout, stderr = await executor.execute(
+        'echo "HOOK1_RAN=true" >> "$AMPLIFIER_ENV_FILE"',
+        {},
+        timeout=5.0,
+    )
+    assert exit_code == 0
+
+    # Second hook should see the var
+    exit_code, stdout, stderr = await executor.execute(
+        'echo "HOOK1_RAN=$HOOK1_RAN"',
+        {},
+        timeout=5.0,
+    )
+    assert exit_code == 0
+    assert "HOOK1_RAN=true" in stdout
+
+    # Cleanup
+    executor.cleanup()

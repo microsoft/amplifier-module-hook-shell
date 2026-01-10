@@ -19,13 +19,37 @@ logger = logging.getLogger(__name__)
 class ShellHookBridge:
     """Bridge that executes shell hooks in Amplifier."""
 
-    # Map Claude Code events to our internal event names
+    # Map Amplifier events to Claude Code event names
+    # Phase 1 events
     CLAUDE_EVENT_MAP = {
         "tool:pre": "PreToolUse",
         "tool:post": "PostToolUse",
         "prompt:submit": "UserPromptSubmit",
         "session:start": "SessionStart",
         "session:end": "SessionEnd",
+        # Phase 2 events
+        "prompt:complete": "Stop",
+        "context:pre_compact": "PreCompact",
+        "approval:required": "PermissionRequest",
+        "session:resume": "SessionStart",  # Maps to SessionStart with trigger=resume
+        "user:notification": "Notification",
+    }
+
+    # Events that support blocking/modification
+    BLOCKING_EVENTS = {
+        "PreToolUse",
+        "UserPromptSubmit",
+        "Stop",
+        "PermissionRequest",
+    }
+
+    # Events that support context injection
+    CONTEXT_INJECTION_EVENTS = {
+        "PreToolUse",
+        "PostToolUse",
+        "UserPromptSubmit",
+        "SessionStart",
+        "PreCompact",
     }
 
     def __init__(self, config: dict[str, Any]):
@@ -97,27 +121,32 @@ class ShellHookBridge:
         if not claude_event:
             return {"action": "continue"}
 
-        # Extract tool name for matching
-        tool_name = data.get("tool_name", data.get("name", ""))
+        # Extract matcher target based on event type
+        # SessionStart uses "trigger" for matching (startup, resume, clear, compact)
+        # Tool events use "tool_name" for matching
+        if claude_event == "SessionStart":
+            match_target = data.get("trigger", "startup")
+        else:
+            match_target = data.get("tool_name", data.get("name", ""))
 
         # Collect matching hooks from all sources
         matching_hooks: list[dict[str, Any]] = []
 
         # 1. Directory-based hooks (.amplifier/hooks/)
         if claude_event in self.matcher_groups:
-            dir_hooks = self.matcher_groups[claude_event].get_matching_hooks(tool_name)
+            dir_hooks = self.matcher_groups[claude_event].get_matching_hooks(match_target)
             matching_hooks.extend(dir_hooks)
 
         # 2. Skill-scoped hooks (from loaded skills)
         for skill_name, skill_matchers in self.skill_matcher_groups.items():
             if claude_event in skill_matchers:
-                skill_hooks = skill_matchers[claude_event].get_matching_hooks(tool_name)
+                skill_hooks = skill_matchers[claude_event].get_matching_hooks(match_target)
                 if skill_hooks:
                     logger.debug(f"Found {len(skill_hooks)} hooks from skill '{skill_name}'")
                     matching_hooks.extend(skill_hooks)
 
         if not matching_hooks:
-            logger.debug(f"No matching hooks for {claude_event} with tool {tool_name}")
+            logger.debug(f"No matching hooks for {claude_event} with target {match_target}")
             return {"action": "continue"}
 
         logger.info(f"Found {len(matching_hooks)} matching hooks for {claude_event}")
@@ -190,6 +219,70 @@ class ShellHookBridge:
         from amplifier_core.models import HookResult
 
         result = await self._execute_hooks("session:end", data)
+        return HookResult(**result)
+
+    # --- Phase 2 Event Handlers ---
+
+    async def on_prompt_complete(self, event: str, data: dict[str, Any]):
+        """
+        Handle prompt:complete events (Stop hook).
+
+        This fires when the orchestrator completes a prompt. Hooks can prevent
+        the stop (return action=deny to continue the conversation).
+        """
+        from amplifier_core.models import HookResult
+
+        result = await self._execute_hooks("prompt:complete", data)
+        return HookResult(**result)
+
+    async def on_context_pre_compact(self, event: str, data: dict[str, Any]):
+        """
+        Handle context:pre_compact events (PreCompact hook).
+
+        This fires before context compaction. Hooks can inject context
+        or perform cleanup before compaction occurs.
+        """
+        from amplifier_core.models import HookResult
+
+        result = await self._execute_hooks("context:pre_compact", data)
+        return HookResult(**result)
+
+    async def on_approval_required(self, event: str, data: dict[str, Any]):
+        """
+        Handle approval:required events (PermissionRequest hook).
+
+        This fires when an operation requires user approval. Hooks can
+        auto-approve (action=continue) or auto-deny (action=deny).
+        """
+        from amplifier_core.models import HookResult
+
+        result = await self._execute_hooks("approval:required", data)
+        return HookResult(**result)
+
+    async def on_session_resume(self, event: str, data: dict[str, Any]):
+        """
+        Handle session:resume events.
+
+        Maps to SessionStart with trigger=resume for hooks that need to
+        differentiate between fresh starts and resumes.
+        """
+        from amplifier_core.models import HookResult
+
+        # Add trigger info for hooks that care about resume vs start
+        data_with_trigger = {**data, "trigger": "resume"}
+        result = await self._execute_hooks("session:resume", data_with_trigger)
+        return HookResult(**result)
+
+    async def on_user_notification(self, event: str, data: dict[str, Any]):
+        """
+        Handle user:notification events (Notification hook).
+
+        This fires when a notification is shown to the user. Hooks can
+        intercept or augment notifications.
+        """
+        from amplifier_core.models import HookResult
+
+        result = await self._execute_hooks("user:notification", data)
         return HookResult(**result)
 
     # --- Skill-Scoped Hook Management ---

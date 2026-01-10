@@ -462,12 +462,19 @@ async def test_on_session_end_handler(tmp_path, monkeypatch, mock_hook_result):
 
 def test_claude_event_map():
     """Test that event map contains expected mappings."""
+    # Phase 1 events
     expected_mappings = {
         "tool:pre": "PreToolUse",
         "tool:post": "PostToolUse",
         "prompt:submit": "UserPromptSubmit",
         "session:start": "SessionStart",
         "session:end": "SessionEnd",
+        # Phase 2 events
+        "prompt:complete": "Stop",
+        "context:pre_compact": "PreCompact",
+        "approval:required": "PermissionRequest",
+        "session:resume": "SessionStart",
+        "user:notification": "Notification",
     }
 
     assert ShellHookBridge.CLAUDE_EVENT_MAP == expected_mappings
@@ -504,4 +511,170 @@ async def test_execute_hooks_extracts_tool_name_variants(tmp_path, monkeypatch):
 
     # Test with 'name' field
     await bridge._execute_hooks("tool:pre", {"name": "Bash", "input": {}})
+    assert mock_executor.execute.call_count == 1
+
+
+# --- Phase 2 Event Handler Tests ---
+
+
+@pytest.mark.asyncio
+async def test_on_prompt_complete_handler(tmp_path, monkeypatch):
+    """Test that prompt:complete (Stop) events are handled correctly."""
+    hooks_dir = tmp_path / ".amplifier" / "hooks"
+    hooks_dir.mkdir(parents=True)
+
+    config = {
+        "hooks": {
+            "Stop": [{"matcher": ".*", "hooks": [{"type": "command", "command": "echo stop"}]}]
+        }
+    }
+    (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+    monkeypatch.chdir(tmp_path)
+    bridge = ShellHookBridge({})
+
+    mock_executor = AsyncMock()
+    mock_executor.execute = AsyncMock(return_value=(0, "", ""))
+    bridge.executor = mock_executor
+
+    result = await bridge.on_prompt_complete("prompt:complete", {})
+    assert result.action == "continue"
+
+
+@pytest.mark.asyncio
+async def test_on_context_pre_compact_handler(tmp_path, monkeypatch):
+    """Test that context:pre_compact (PreCompact) events are handled correctly."""
+    hooks_dir = tmp_path / ".amplifier" / "hooks"
+    hooks_dir.mkdir(parents=True)
+
+    config = {
+        "hooks": {
+            "PreCompact": [
+                {"matcher": ".*", "hooks": [{"type": "command", "command": "echo compact"}]}
+            ]
+        }
+    }
+    (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+    monkeypatch.chdir(tmp_path)
+    bridge = ShellHookBridge({})
+
+    mock_executor = AsyncMock()
+    mock_executor.execute = AsyncMock(return_value=(0, "", ""))
+    bridge.executor = mock_executor
+
+    result = await bridge.on_context_pre_compact("context:pre_compact", {})
+    assert result.action == "continue"
+
+
+@pytest.mark.asyncio
+async def test_on_approval_required_handler(tmp_path, monkeypatch):
+    """Test that approval:required (PermissionRequest) events are handled correctly."""
+    hooks_dir = tmp_path / ".amplifier" / "hooks"
+    hooks_dir.mkdir(parents=True)
+
+    config = {
+        "hooks": {
+            "PermissionRequest": [
+                {"matcher": ".*", "hooks": [{"type": "command", "command": "echo approve"}]}
+            ]
+        }
+    }
+    (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+    monkeypatch.chdir(tmp_path)
+    bridge = ShellHookBridge({})
+
+    mock_executor = AsyncMock()
+    mock_executor.execute = AsyncMock(return_value=(0, "", ""))
+    bridge.executor = mock_executor
+
+    result = await bridge.on_approval_required("approval:required", {"operation": "write"})
+    assert result.action == "continue"
+
+
+@pytest.mark.asyncio
+async def test_on_user_notification_handler(tmp_path, monkeypatch):
+    """Test that user:notification (Notification) events are handled correctly."""
+    hooks_dir = tmp_path / ".amplifier" / "hooks"
+    hooks_dir.mkdir(parents=True)
+
+    config = {
+        "hooks": {
+            "Notification": [
+                {"matcher": ".*", "hooks": [{"type": "command", "command": "echo notify"}]}
+            ]
+        }
+    }
+    (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+    monkeypatch.chdir(tmp_path)
+    bridge = ShellHookBridge({})
+
+    mock_executor = AsyncMock()
+    mock_executor.execute = AsyncMock(return_value=(0, "", ""))
+    bridge.executor = mock_executor
+
+    result = await bridge.on_user_notification("user:notification", {"message": "test"})
+    assert result.action == "continue"
+
+
+@pytest.mark.asyncio
+async def test_session_start_trigger_matching(tmp_path, monkeypatch):
+    """Test that SessionStart events match on trigger field."""
+    hooks_dir = tmp_path / ".amplifier" / "hooks"
+    hooks_dir.mkdir(parents=True)
+
+    # Hook that only matches "resume" trigger
+    config = {
+        "hooks": {
+            "SessionStart": [
+                {"matcher": "resume", "hooks": [{"type": "command", "command": "echo resume"}]}
+            ]
+        }
+    }
+    (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+    monkeypatch.chdir(tmp_path)
+    bridge = ShellHookBridge({})
+
+    mock_executor = AsyncMock()
+    mock_executor.execute = AsyncMock(return_value=(0, "", ""))
+    bridge.executor = mock_executor
+
+    # Should NOT match - trigger is "startup"
+    await bridge._execute_hooks("session:start", {"trigger": "startup"})
+    assert mock_executor.execute.call_count == 0
+
+    # Should match - trigger is "resume"
+    await bridge._execute_hooks("session:start", {"trigger": "resume"})
+    assert mock_executor.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_session_resume_adds_trigger(tmp_path, monkeypatch):
+    """Test that session:resume events add trigger=resume to data."""
+    hooks_dir = tmp_path / ".amplifier" / "hooks"
+    hooks_dir.mkdir(parents=True)
+
+    config = {
+        "hooks": {
+            "SessionStart": [
+                {"matcher": "resume", "hooks": [{"type": "command", "command": "echo resume"}]}
+            ]
+        }
+    }
+    (hooks_dir / "hooks.json").write_text(json.dumps(config))
+
+    monkeypatch.chdir(tmp_path)
+    bridge = ShellHookBridge({})
+
+    mock_executor = AsyncMock()
+    mock_executor.execute = AsyncMock(return_value=(0, "", ""))
+    bridge.executor = mock_executor
+
+    # on_session_resume should add trigger=resume
+    result = await bridge.on_session_resume("session:resume", {"session_id": "test"})
+    assert result.action == "continue"
+    # The hook should have been executed since trigger=resume matches
     assert mock_executor.execute.call_count == 1

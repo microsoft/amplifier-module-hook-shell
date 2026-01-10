@@ -7,6 +7,7 @@ Executes Claude Code hooks as subprocesses with proper I/O handling.
 import asyncio
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,10 @@ class HookExecutor:
         self.project_dir = project_dir
         self.hooks_dir = hooks_dir
         self.session_id = session_id
+
+        # Environment file for persistence across hooks (Phase 2)
+        self._env_file: Path | None = None
+        self._persisted_env: dict[str, str] = {}
 
     async def execute(
         self, command: str, input_data: dict[str, Any], timeout: float = 30.0
@@ -81,6 +86,10 @@ class HookExecutor:
         except Exception as e:
             return (1, "", f"Hook execution failed: {str(e)}")
 
+        finally:
+            # Load any env vars persisted by the hook (Phase 2)
+            self._load_persisted_env()
+
     def _prepare_environment(self) -> dict[str, str]:
         """
         Prepare environment variables for hook execution.
@@ -98,4 +107,70 @@ class HookExecutor:
         # Claude Code compatibility aliases
         env["CLAUDE_PROJECT_DIR"] = str(self.project_dir)
 
+        # Environment file for persistence (Phase 2)
+        env["AMPLIFIER_ENV_FILE"] = str(self._get_env_file())
+        env["CLAUDE_ENV_FILE"] = env["AMPLIFIER_ENV_FILE"]  # Compatibility alias
+
+        # Include any persisted environment variables from previous hooks
+        env.update(self._persisted_env)
+
         return env
+
+    def _get_env_file(self) -> Path:
+        """
+        Get or create the environment persistence file.
+
+        Returns:
+            Path to the environment file
+        """
+        if self._env_file is None:
+            # Create a temp file for this session
+            fd, path = tempfile.mkstemp(
+                prefix=f"amplifier-env-{self.session_id[:8]}-",
+                suffix=".env",
+            )
+            os.close(fd)
+            self._env_file = Path(path)
+        return self._env_file
+
+    def _load_persisted_env(self) -> None:
+        """
+        Load environment variables persisted by hooks.
+
+        Reads the env file and parses "export VAR=value" or "VAR=value" lines.
+        """
+        if self._env_file is None or not self._env_file.exists():
+            return
+
+        try:
+            content = self._env_file.read_text()
+            for line in content.strip().split("\n"):
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                # Handle "export VAR=value" format
+                if line.startswith("export "):
+                    line = line[7:]
+
+                # Parse VAR=value
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.strip()
+                    # Remove surrounding quotes if present
+                    if (value.startswith('"') and value.endswith('"')) or \
+                       (value.startswith("'") and value.endswith("'")):
+                        value = value[1:-1]
+                    self._persisted_env[key] = value
+        except Exception:
+            pass  # Silently ignore parse errors
+
+    def cleanup(self) -> None:
+        """Clean up resources (remove temp env file)."""
+        if self._env_file is not None and self._env_file.exists():
+            try:
+                self._env_file.unlink()
+            except Exception:
+                pass
+            self._env_file = None
