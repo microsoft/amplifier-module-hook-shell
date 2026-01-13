@@ -1,0 +1,23 @@
+bundle:
+  name: hook-shell-behavior
+  version: 1.0.0
+  description: Shell hooks support - execute shell scripts on Amplifier lifecycle events
+
+hooks:
+  - module: hook-shell
+    source: git+https://github.com/microsoft/amplifier-module-hook-shell@main
+    config:
+      # Shell hooks configuration
+      # Hooks are discovered from:
+      #   - .amplifier/hooks/ (workspace)
+      #   - ~/.amplifier/hooks/ (user home)
+      
+      # Enable/disable the hook bridge (default: true)
+      enabled: true
+      
+      # Timeout for shell hook execution in seconds (default: 30)
+      timeout: 30
+      
+      # Allow hooks to block operations (default: true)
+      # When false, hook failures are logged but don't stop execution
+      allow_blocking: true
