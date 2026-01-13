@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from amplifier_module_hooks_shell.bridge import ShellHookBridge
+from amplifier_module_hook_shell.bridge import ShellHookBridge
 
 
 @pytest.fixture

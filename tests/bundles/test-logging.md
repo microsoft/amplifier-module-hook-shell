@@ -8,8 +8,8 @@ includes:
   - bundle: git+https://github.com/microsoft/amplifier-foundation@main
 
 hooks:
-  - module: hooks-shell
-    source: git+https://github.com/robotdad/amplifier-module-hooks-shell@main
+  - module: hook-shell
+    source: git+https://github.com/robotdad/amplifier-module-hook-shell@main
     config:
       hooks_dirs:
         - .amplifier/hooks

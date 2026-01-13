@@ -1,6 +1,6 @@
 """Tests for data translator."""
 
-from amplifier_module_hooks_shell.translator import DataTranslator
+from amplifier_module_hook_shell.translator import DataTranslator
 
 
 def test_translate_pre_tool_use():

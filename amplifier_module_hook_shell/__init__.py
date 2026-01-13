@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from amplifier_module_hooks_shell.bridge import ShellHookBridge
+from amplifier_module_hook_shell.bridge import ShellHookBridge
 
 __version__ = "0.1.0"
 __amplifier_module_type__ = "hook"
@@ -35,7 +35,7 @@ async def mount(coordinator: Any, config: dict[str, Any]) -> Callable | None:
     Returns:
         Cleanup function to unregister hooks
     """
-    logger.info("Mounting hooks-shell module")
+    logger.info("Mounting hook-shell module")
 
     # Create bridge with config and coordinator (for provider access)
     bridge = ShellHookBridge(config, coordinator)
@@ -75,7 +75,7 @@ async def mount(coordinator: Any, config: dict[str, Any]) -> Callable | None:
         except Exception as e:
             logger.warning(f"Failed to register handler for {event}: {e}")
 
-    logger.info(f"hooks-shell mounted with {len(unregister_fns)} handlers")
+    logger.info(f"hook-shell mounted with {len(unregister_fns)} handlers")
 
     # Return cleanup function
     def cleanup():

@@ -1,6 +1,6 @@
 """Tests for hook matcher."""
 
-from amplifier_module_hooks_shell.matcher import HookMatcher, MatcherGroup
+from amplifier_module_hook_shell.matcher import HookMatcher, MatcherGroup
 
 
 def test_exact_match():

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from amplifier_module_hooks_shell.executor import HookExecutor
+from amplifier_module_hook_shell.executor import HookExecutor
 
 
 def test_prepare_environment(tmp_path):

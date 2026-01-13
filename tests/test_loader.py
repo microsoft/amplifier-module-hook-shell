@@ -2,7 +2,7 @@
 
 import json
 
-from amplifier_module_hooks_shell.loader import HookConfigLoader
+from amplifier_module_hook_shell.loader import HookConfigLoader
 
 
 def test_load_single_config(tmp_path):

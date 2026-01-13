@@ -384,7 +384,7 @@ Component-scoped hooks:
 
 Requires coordination with `amplifier-module-tool-skills`:
 1. Skills loader parses `hooks:` section from frontmatter
-2. Passes hook configs to hooks-shell bridge
+2. Passes hook configs to hook-shell bridge
 3. Bridge registers handlers with lifecycle scope
 4. Cleanup on skill completion
 
@@ -460,7 +460,7 @@ Hooks run as **shell commands with user permissions**. Malicious hooks can:
 ```yaml
 # In bundle configuration
 hooks:
-  - module: hooks-shell
+  - module: hook-shell
     config:
       enabled: true
       allow_user_hooks: true       # Allow .amplifier/hooks/
@@ -506,7 +506,7 @@ def merge_hook_configs(configs: list[dict]) -> dict:
 - Manual hook installation to `.amplifier/hooks/`
 
 **Deliverables**:
-- `amplifier-module-hooks-shell` module ✅
+- `amplifier-module-hook-shell` module ✅
 - Configuration loader ✅
 - Command executor ✅
 - Response translator ✅
@@ -534,7 +534,7 @@ def merge_hook_configs(configs: list[dict]) -> dict:
 - ✅ Frontmatter hook parser in discovery.py
 - ✅ `skill:loaded` event includes hooks config and skill_directory
 - ✅ `skill:unloaded` event for cleanup
-- ✅ Event listeners in hooks-shell for skill events
+- ✅ Event listeners in hook-shell for skill events
 - ✅ Scoped hook registration/cleanup in bridge.py
 - ✅ Relative path resolution for skill hook commands
 - ✅ Example skill with hooks (`examples/skill-with-hooks/`)

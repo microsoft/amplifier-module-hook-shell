@@ -9,10 +9,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from amplifier_module_hooks_shell.executor import HookExecutor
-from amplifier_module_hooks_shell.loader import HookConfigLoader
-from amplifier_module_hooks_shell.matcher import MatcherGroup
-from amplifier_module_hooks_shell.translator import DataTranslator
+from amplifier_module_hook_shell.executor import HookExecutor
+from amplifier_module_hook_shell.loader import HookConfigLoader
+from amplifier_module_hook_shell.matcher import MatcherGroup
+from amplifier_module_hook_shell.translator import DataTranslator
 
 logger = logging.getLogger(__name__)
 

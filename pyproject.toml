@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "amplifier-module-hooks-shell"
+name = "amplifier-module-hook-shell"
 version = "0.1.0"
 description = "Bridge module to execute Claude Code-compatible hooks in Amplifier"
 readme = "README.md"
@@ -37,20 +37,20 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/robotdad/amplifier-module-hooks-shell"
-Repository = "https://github.com/robotdad/amplifier-module-hooks-shell"
-Documentation = "https://github.com/robotdad/amplifier-module-hooks-shell/blob/main/SPEC.md"
+Homepage = "https://github.com/microsoft/amplifier-module-hook-shell"
+Repository = "https://github.com/microsoft/amplifier-module-hook-shell"
+Documentation = "https://github.com/microsoft/amplifier-module-hook-shell/blob/main/SPEC.md"
 
 [project.entry-points."amplifier.modules"]
-hooks-shell = "amplifier_module_hooks_shell:mount"
+hook-shell = "amplifier_module_hook_shell:mount"
 
 [tool.setuptools.packages.find]
-include = ["amplifier_module_hooks_shell*"]
+include = ["amplifier_module_hook_shell*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=amplifier_module_hooks_shell --cov-report=term-missing"
+addopts = "--cov=amplifier_module_hook_shell --cov-report=term-missing"
 
 [tool.black]
 line-length = 100

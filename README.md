@@ -24,8 +24,8 @@ Add to your Amplifier bundle:
 ```yaml
 # bundle.yaml
 hooks:
-  - module: hooks-shell
-    source: git+https://github.com/robotdad/amplifier-module-hooks-shell@main
+  - module: hook-shell
+    source: git+https://github.com/microsoft/amplifier-module-hook-shell@main
 ```
 
 ### Create Your First Hook
