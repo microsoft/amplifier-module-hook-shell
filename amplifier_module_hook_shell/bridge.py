@@ -66,7 +66,9 @@ class ShellHookBridge:
         self.enabled = config.get("enabled", True)
 
         # Discover hooks directory
-        project_dir = Path.cwd()
+        # Use working_dir capability if available, fall back to cwd for backward compatibility
+        working_dir = coordinator.get_capability("session.working_dir") if coordinator else None
+        project_dir = Path(working_dir) if working_dir else Path.cwd()
         hooks_dir = project_dir / ".amplifier" / "hooks"
 
         if not hooks_dir.exists():
