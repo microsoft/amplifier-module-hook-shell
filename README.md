@@ -228,9 +228,11 @@ Hooks have access to:
 
 | Variable | Description |
 |----------|-------------|
-| `AMPLIFIER_PROJECT_DIR` | Project root |
+| `AMPLIFIER_PROJECT_DIR` | Project root (from `session.working_dir` capability, or cwd) |
 | `AMPLIFIER_HOOKS_DIR` | `.amplifier/hooks/` directory |
 | `AMPLIFIER_SESSION_ID` | Current session ID |
+
+> **Note**: The project directory is determined by the `session.working_dir` coordinator capability when available, falling back to the current working directory for backward compatibility. This enables correct hook discovery in server/web deployments.
 
 ## Example Hooks
 

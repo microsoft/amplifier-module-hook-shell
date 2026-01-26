@@ -59,14 +59,18 @@ class ShellHookBridge:
 
         Args:
             config: Module configuration from bundle YAML
-            coordinator: Module coordinator for provider access (optional for tests)
+            coordinator: Module coordinator for capability access and provider lookup.
+                Used to get session.working_dir for project directory detection.
+                Falls back to cwd if not provided or capability not registered.
         """
         self.config = config
         self.coordinator = coordinator
         self.enabled = config.get("enabled", True)
 
         # Discover hooks directory
-        project_dir = Path.cwd()
+        # Use working_dir capability if available, fall back to cwd for backward compatibility
+        working_dir = coordinator.get_capability("session.working_dir") if coordinator else None
+        project_dir = Path(working_dir) if working_dir else Path.cwd()
         hooks_dir = project_dir / ".amplifier" / "hooks"
 
         if not hooks_dir.exists():
