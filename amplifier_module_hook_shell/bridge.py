@@ -59,7 +59,9 @@ class ShellHookBridge:
 
         Args:
             config: Module configuration from bundle YAML
-            coordinator: Module coordinator for provider access (optional for tests)
+            coordinator: Module coordinator for capability access and provider lookup.
+                Used to get session.working_dir for project directory detection.
+                Falls back to cwd if not provided or capability not registered.
         """
         self.config = config
         self.coordinator = coordinator
