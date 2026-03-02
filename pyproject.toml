@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "amplifier-core @ git+https://github.com/microsoft/amplifier-core",
+    "amplifier-core",
 ]
 
 [project.optional-dependencies]
